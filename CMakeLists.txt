@@ -17,6 +17,7 @@ find_package(rosidl_default_generators REQUIRED)
 find_package(tf2 REQUIRED) 
 find_package(tf2_ros REQUIRED) 
 find_package(action_msgs REQUIRED)
+find_package(weight_service REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   "action/FollowTrajectory.action"

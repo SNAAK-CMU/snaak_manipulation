@@ -14,9 +14,9 @@ class ExecuteIngredientManipulationServer(Node):
     def __init__(self):
         super().__init__('ingredient_manipulation_server')
 
-        self.declare_parameter('ham_bin_id', 1)
-        self.declare_parameter('cheese_bin_id', 2)
-        self.declare_parameter('bread_bin_id', 3)
+        self.declare_parameter('ham_bin_id', 'bin1')
+        self.declare_parameter('cheese_bin_id', 'bin2')
+        self.declare_parameter('bread_bin_id', 'bin3')
 
         self.bin_id = {
             'cheese_bin_id': self.get_parameter('cheese_bin_id').value,
@@ -46,14 +46,14 @@ class ExecuteIngredientManipulationServer(Node):
 
         self.get_logger().info("Started Manipulation Primary Node")
         
-        self.current_location = 0  # 0 is home, 1 - 3 are bins, 4 is assembly
+        self.current_location = 'home'
 
         self.trajectory_map = {
-            0: {1: 1, 2: 2, 3: 3, 4: 4},    # From home to bins 1-3 and assembly
-            1: {0: 5, 4: 6},                # From bin 1 to home and assembly
-            2: {0: 7, 4: 8},                # From bin 2 to home and assembly
-            3: {0: 9, 4: 10},               # From bin 3 to home and assembly
-            4: {0: 11, 1: 12, 2: 13, 3: 14} # From assembly to bins 1-3 and home
+            'home': {'bin1': 1, 'bin2': 2, 'bin3': 3, 'assembly': 4},
+            'bin1': {'home': 5, 'assembly': 6},
+            'bin2': {'home': 7, 'assembly': 8},
+            'bin3': {'home': 9, 'assembly': 10},
+            'assembly': {'home': 11, 'bin1': 12, 'bin2': 13, 'bin3': 14}
         }
 
     def parameters_callback(self, parameter_list):
@@ -87,15 +87,14 @@ class ExecuteIngredientManipulationServer(Node):
     def execute_ingred_manipulation_callback(self, goal_handle):
         # Considering ingredient 0 is cheese, 1 is ham, and 2 is bread
         ingredient_id = goal_handle.request.ingredient_id
-        self.current_location = 0 # TODO this is temporary, until we have more trajectories generated
         bin_location = None
-        match ingredient_id:
-            case 0:
-                bin_location = self.bin_id["cheese_bin_id"]
-            case 1:
-                bin_location = self.bin_id["ham_bin_id"]
-            case 2:
-                bin_location = self.bin_id["bread_bin_id"]
+
+        if (ingredient_id == 'cheese'):
+            bin_location = self.bin_id["cheese_bin_id"]
+        elif (ingredient_id == 'ham'):
+            bin_location = self.bin_id["ham_bin_id"]
+        elif (ingredient_id == 'bread'):
+            bin_location = self.bin_id["bread_bin_id"]
 
         if bin_location == None:
             self.get_logger().info("Invalid Ingredient ID Given")
@@ -135,18 +134,32 @@ class ExecuteIngredientManipulationServer(Node):
             self.get_logger().error("Ingredient Pick-Up Failed")
             goal_handle.abort()
             return ManipulateIngredient.Result()
-        else:
-            self.current_location = bin_location
 
+        # TODO Add weighing scale service call to determine if we actually grabbed the ingredient
+
+        traj_id = self.trajectory_map[self.current_location]["assembly"]
+        traj_goal = FollowTrajectory.Goal()
+        traj_goal.traj_id = traj_id
+
+        traj_success = self.send_goal(self._traj_action_client, traj_goal)
+
+        if (not traj_success):
+            goal_handle.abort()
+            self.get_logger().error("Trajectory Following Failed")
+            return ManipulateIngredient.Result()
+        else:
+            self.current_location = "assembly"
+
+
+        # TODO add place manuever
         goal_handle.succeed()
 
 
-        # TODO add trajectory following to assembly area and placing ingredient
         return ManipulateIngredient.Result()
 
 
     def execute_rth_callback(self, goal_handle):
-        traj_id = self.trajectory_map[self.current_location][0]
+        traj_id = self.trajectory_map[self.current_location]['home']
         traj_goal = FollowTrajectory.Goal()
         traj_goal.traj_id = traj_id
 

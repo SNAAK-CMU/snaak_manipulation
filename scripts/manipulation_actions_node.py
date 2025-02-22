@@ -35,6 +35,50 @@ class ManipulationActionServerNode(Node):
         )
 
         self.fa = FrankaArm(init_rclpy=False)
+
+        self.trajectory_file_map = {
+            1: 'home2bin1_verified.pkl',
+            2: 'home2bin2_verified.pkl',
+            3: 'home2bin3_verified.pkl',
+            4: 'home2assembly_verified.pkl',
+            5: 'bin12home_verified.pkl',
+            6: 'bin12assembly_verified.pkl',
+            7: 'bin22home_verified.pkl',
+            8: 'bin22assembly_verified.pkl',
+            9: 'bin32home_verified.pkl',
+            10: 'bin32assembly_verified.pkl',
+            11: 'assembly2home_verified.pkl',
+            12: 'assembly2bin1_verified.pkl',
+            13: 'assembly2bin2_verified.pkl',
+            14: 'assembly2bin3_verified.pkl'
+        }
+
+        # See collision_boxes.txt in /franka_settings for more detailed explanation
+        self.kiosk_collision_boxes = np.array([
+            # sides
+            [0.25, 0.55, 0.5, 0, 0, 0, 1.1, 0.01, 1.1],
+            [0.25, -0.55, 0.5, 0, 0, 0, 1.1, 0.01, 1.1],
+            # back
+            [-0.41, 0, 0.5, 0, 0, 0, 0.01, 1, 1.1], 
+            # front
+            [0.77, 0, 0.5, 0, 0, 0, 0.01, 1, 1.1],
+            # top
+            [0.25, 0, 1, 0, 0, 0, 1.2, 1, 0.01],
+            # bottom
+            [0.25, 0, -0.05, 0, 0, 0, 1.2, 1, 0.01],
+            
+            # sandwich assembly area
+            [0.5, 0.25, 0.125, 0, 0, 0, 0.68, 0.695, 0.26],
+            
+            # right bin area
+            [0.43, -0.3615, 0.0, 0, 0, 0, 0.68, 0.375, 0.001],
+            [0.14, -0.3615, 0.125, 0, 0, 0, 0.08, 0.375, 0.26]
+            [0.344, -0.3615, 0.125, 0, 0, 0, 0.05, 0.375, 0.26],
+            [0.542, -0.3615, 0.125, 0, 0, 0, 0.05, 0.375, 0.26],
+            [0.75, -0.3615, 0.125, 0, 0, 0, 0.08, 0.375, 0.26],
+            [0.43, -0.215, 0.125, 0, 0, 0, 0.68, 0.07, 0.26],
+            [0.43, -0.52, 0.125, 0, 0, 0, 0.68, 0.07, 0.26]
+        ])
         self.get_logger().info("Started Manipulation Action Server Node")
 
 
@@ -45,10 +89,14 @@ class ManipulationActionServerNode(Node):
         
         result = FollowTrajectory.Result()
 
-        if traj_file_path is None or not self.fa.is_skill_done:
+        if traj_file_path is None:
+            self.get_logger().error("Invalid Trajectory ID")
             goal_handle.abort()
             return result
-        else:
+        
+        self.fa.wait_for_skill() # in case other skill is running
+
+        try:
             self.get_logger().info('Executing Trajectory...')
             self.execute_trajectory(traj_file_path)
 
@@ -74,11 +122,16 @@ class ManipulationActionServerNode(Node):
 
             goal_handle.succeed()
             result.end_pose = transform
+        except Exception as e:
+            self.get_logger().error(f"Error Occured during trajectory following {e} ")
+            goal_handle.abort()
+            raise e
+        finally:
             return result
     
     def wait_for_skill_with_collision_check(self):
         while(not self.fa.is_skill_done()):  # looping, and at each iteration detect if arm is in collision with boxes (this uses the frankapy boxes)
-            if (self.fa.is_joints_in_collision_with_boxes()):
+            if (self.fa.is_joints_in_collision_with_boxes(self.kiosk_collision_boxes)):
                 self.fa.stop_skill() # this seems to make the motion break, but it does prevent collision
                 raise Exception("In Collision with boxes, cancelling motion")
 
@@ -92,13 +145,14 @@ class ManipulationActionServerNode(Node):
 
         success = False
         result = Pickup.Result()
-
+        self.fa.wait_for_skill() # in case other skill is running
         try:
             destination_x = goal_handle.request.x
             destination_y = goal_handle.request.y
             depth = goal_handle.request.depth
 
             default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
+            
             # move to x, y
             z_pre_grasp = self.fa.get_pose().translation[2]
             new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
@@ -109,7 +163,6 @@ class ManipulationActionServerNode(Node):
             self.wait_for_skill_with_collision_check()
             
             # move down
-            #new_pose = self.fa.get_pose()
             new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
             new_pose.translation = [destination_x, destination_y, z_pre_grasp - depth] #x, y global, depth is relative TODO: confirm this
             new_pose.rotation = default_rotation
@@ -160,18 +213,9 @@ class ManipulationActionServerNode(Node):
     def traj_id_to_file(self, traj_id):
         package_share_directory = get_package_share_directory('snaak_manipulation')
         pkl_file_name = None
-        match traj_id:
-            case 1:
-                pkl_file_name = "home2bin1_cam_verified.pkl"
-            case 2:
-                pkl_file_name = "home2bin2_cam_verified.pkl"
-            case 3:
-                pkl_file_name = "home2bin3_cam_verified.pkl"
-            case 4:
-                pkl_file_name = "home_assembly_traj.pkl"
-        
-        if pkl_file_name is None:
-            self.get_logger().info('Invalid Trajectory Entered')
+        if traj_id in self.traj_id_to_file:
+            pkl_file_name = self.traj_id_to_file[traj_id]
+        else:
             return None
         
         traj_file_path = os.path.join(package_share_directory, pkl_file_name)
@@ -189,10 +233,6 @@ class ManipulationActionServerNode(Node):
         dt = 0.01
 
         joints_traj = skill_state_dict['q']
-
-
-        # Goto the first position in the trajectory.
-        #fa.log_info('Initializing Sensor Publisher')
 
         # go to initial pose if needed, this is more a safety feature, should not be relied on
         self.fa.goto_joints(joints_traj[0])
