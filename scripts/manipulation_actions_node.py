@@ -8,8 +8,9 @@ from frankapy.proto import JointPositionSensorMessage, ShouldTerminateSensorMess
 import rclpy
 from rclpy.action import ActionServer
 from rclpy.node import Node
-from snaak_manipulation.action import FollowTrajectory, Pickup
+from snaak_manipulation.action import FollowTrajectory, Pickup, ReturnToHome
 
+from std_srvs.srv import Trigger
 import os
 from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Transform, Vector3, Quaternion
@@ -33,6 +34,19 @@ class ManipulationActionServerNode(Node):
             'pickup',
             self.execute_pickup_callback
         )
+
+        self._reset_arm_action_server = ActionServer(
+            self,
+            ReturnToHome,
+            'reset_arm',
+            self.execute_reset_arm_callback
+        )
+
+        self._enable_vacuum_client = self.create_client(Trigger, 'enable_vacuum')
+        while not self._enable_vacuum_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('Vacuum enable service not available, waiting...')
+
+        self._req = Trigger.Request()
 
         self.fa = FrankaArm(init_rclpy=False)
 
@@ -72,7 +86,7 @@ class ManipulationActionServerNode(Node):
             
             # right bin area
             [0.43, -0.3615, 0.0, 0, 0, 0, 0.68, 0.375, 0.001],
-            [0.14, -0.3615, 0.125, 0, 0, 0, 0.08, 0.375, 0.26]
+            [0.14, -0.3615, 0.125, 0, 0, 0, 0.08, 0.375, 0.26],
             [0.344, -0.3615, 0.125, 0, 0, 0, 0.05, 0.375, 0.26],
             [0.542, -0.3615, 0.125, 0, 0, 0, 0.05, 0.375, 0.26],
             [0.75, -0.3615, 0.125, 0, 0, 0, 0.08, 0.375, 0.26],
@@ -84,7 +98,6 @@ class ManipulationActionServerNode(Node):
 
     def execute_trajectory_callback(self, goal_handle):
 
-        self.get_logger().info("Opening .pkl File...")
         traj_file_path = self.traj_id_to_file(goal_handle.request.traj_id)
         
         result = FollowTrajectory.Result()
@@ -131,9 +144,22 @@ class ManipulationActionServerNode(Node):
     
     def wait_for_skill_with_collision_check(self):
         while(not self.fa.is_skill_done()):  # looping, and at each iteration detect if arm is in collision with boxes (this uses the frankapy boxes)
-            if (self.fa.is_joints_in_collision_with_boxes(self.kiosk_collision_boxes)):
+            if (self.fa.is_joints_in_collision_with_boxes(boxes=self.kiosk_collision_boxes)):
                 self.fa.stop_skill() # this seems to make the motion break, but it does prevent collision
                 raise Exception("In Collision with boxes, cancelling motion")
+
+    def execute_reset_arm_callback(self, goal_handle):
+        self.get_logger().info('Resetting Arm')
+        try:
+            self.fa.reset_joints()
+            goal_handle.succeed()
+        except Exception as e:
+            self.get_logger().info('Error During Return to Home')
+            goal_handle.abort()
+            raise e
+        finally:
+            return ReturnToHome.Result()
+
 
     def execute_pickup_callback(self, goal_handle):
 
@@ -142,7 +168,6 @@ class ManipulationActionServerNode(Node):
         # move down to pick up
         # send service/action call to start vaccuum and wait for response
         # move up
-
         success = False
         result = Pickup.Result()
         self.fa.wait_for_skill() # in case other skill is running
@@ -172,6 +197,8 @@ class ManipulationActionServerNode(Node):
 
             # call the pneumatic node service
             # self.get_logger("Grasped!")
+            self.future = self._enable_vacuum_client.call_async(self._req)
+            rclpy.spin_until_future_complete(self, self.future)
             time.sleep(2)
             # move up
             new_pose = self.fa.get_pose()
@@ -208,13 +235,14 @@ class ManipulationActionServerNode(Node):
                 w=q[3]
             )
             result.end_pose = transform
+
             return result  
 
     def traj_id_to_file(self, traj_id):
         package_share_directory = get_package_share_directory('snaak_manipulation')
         pkl_file_name = None
-        if traj_id in self.traj_id_to_file:
-            pkl_file_name = self.traj_id_to_file[traj_id]
+        if traj_id in self.trajectory_file_map:
+            pkl_file_name = self.trajectory_file_map[traj_id]
         else:
             return None
         
