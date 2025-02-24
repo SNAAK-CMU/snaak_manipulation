@@ -2,6 +2,7 @@
 import numpy as np
 import pickle, time
 from frankapy import FrankaArm, SensorDataMessageType
+from frankapy import FrankaConstants as FC
 from frankapy.proto_utils import sensor_proto2ros_msg, make_sensor_group_msg
 from frankapy.proto import JointPositionSensorMessage, ShouldTerminateSensorMessage
 
@@ -183,13 +184,13 @@ class ManipulationActionServerNode(Node):
             new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
             new_pose.translation = [destination_x, destination_y, z_pre_grasp]
             new_pose.rotation = default_rotation
-            self.fa.goto_pose(new_pose, cartesian_impedances=[3000, 3000, 300, 300, 300, 300], use_impedance=False, block=False)
+            self.fa.goto_pose(new_pose, use_impedance=False, block=False) # TODO Issue when going to furthest out bin
             self.get_logger().info("Moving above grasp point...")
             self.wait_for_skill_with_collision_check()
             
             # move down
             new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
-            new_pose.translation = [destination_x, destination_y, z_pre_grasp - depth] #x, y global, depth is relative TODO: confirm this
+            new_pose.translation = [destination_x, destination_y, z_pre_grasp - depth] #x, y global, depth is relative
             new_pose.rotation = default_rotation
             self.fa.goto_pose(new_pose, cartesian_impedances=[3000, 3000, 300, 300, 300, 300], use_impedance=False, block=False)
             self.get_logger().info("Moving Down...")
