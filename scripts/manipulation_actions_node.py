@@ -51,6 +51,9 @@ class ManipulationActionServerNode(Node):
 
         self.fa = FrankaArm(init_rclpy=False)
 
+        # Defining Constants
+        self.pre_grasp_height = 0.3
+
         self.trajectory_file_map = {
             1: 'home2bin1_verified.pkl',
             2: 'home2bin2_verified.pkl',
@@ -94,6 +97,8 @@ class ManipulationActionServerNode(Node):
             [0.43, -0.215, 0.125, 0, 0, 0, 0.68, 0.07, 0.26],
             [0.43, -0.52, 0.125, 0, 0, 0, 0.68, 0.07, 0.26]
         ])
+
+
         self.get_logger().info("Started Manipulation Action Server Node")
 
 
@@ -179,18 +184,18 @@ class ManipulationActionServerNode(Node):
 
             default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
             
-            # move to x, y
-            z_pre_grasp = self.fa.get_pose().translation[2]
+            # move to x, y, and z directly above the bin
+            ingredient_depth = self.fa.get_pose().translation[2] - depth
             new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
-            new_pose.translation = [destination_x, destination_y, z_pre_grasp]
+            new_pose.translation = [destination_x, destination_y, self.pre_grasp_height]
             new_pose.rotation = default_rotation
-            self.fa.goto_pose(new_pose, use_impedance=False, block=False) # TODO Issue when going to furthest out bin
+            self.fa.goto_pose(new_pose, cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, use_impedance=False, block=False) # TODO Issue when going to furthest out bin
             self.get_logger().info("Moving above grasp point...")
             self.wait_for_skill_with_collision_check()
             
             # move down
             new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
-            new_pose.translation = [destination_x, destination_y, z_pre_grasp - depth] #x, y global, depth is relative
+            new_pose.translation = [destination_x, destination_y, ingredient_depth] #x, y global, depth is relative to grasp height
             new_pose.rotation = default_rotation
             self.fa.goto_pose(new_pose, cartesian_impedances=[3000, 3000, 300, 300, 300, 300], use_impedance=False, block=False)
             self.get_logger().info("Moving Down...")
@@ -203,7 +208,7 @@ class ManipulationActionServerNode(Node):
             time.sleep(2)
             # move up
             new_pose = self.fa.get_pose()
-            new_pose.translation[2] = z_pre_grasp
+            new_pose.translation[2] = self.pre_grasp_height
             new_pose.rotation = default_rotation
             self.fa.goto_pose(new_pose, cartesian_impedances=[3000, 3000, 300, 300, 300, 300], use_impedance=False, block=False)
             self.get_logger().info("Moving up...")
