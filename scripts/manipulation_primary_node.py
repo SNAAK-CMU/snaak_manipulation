@@ -121,7 +121,7 @@ class ExecuteIngredientManipulationServer(Node):
         # Considering ingredient 0 is cheese, 1 is ham, and 2 is bread
         ingredient_id = goal_handle.request.ingredient_id
         bin_location = None
-        self.get_logger().info(f"Manipulation {ingredient_id}")
+        self.get_logger().info(f"Manipulating {ingredient_id}...")
 
         if (ingredient_id == 'cheese'):
             bin_location = self.bin_id["cheese_bin_id"]
@@ -159,6 +159,10 @@ class ExecuteIngredientManipulationServer(Node):
             pickup_goal.depth = 0.29
         elif (bin_location == 'bin3'):
             pickup_goal.x = 0.24
+            pickup_goal.y = -0.302
+            pickup_goal.depth = 0.3
+        elif (bin_location == 'bin1'):
+            pickup_goal.x = 0.63
             pickup_goal.y = -0.302
             pickup_goal.depth = 0.3
 
