@@ -35,6 +35,7 @@ install(PROGRAMS
 )
 
 install(DIRECTORY
+  launch
   ${CMAKE_SOURCE_DIR}/share/${PROJECT_NAME}/
   DESTINATION share/${PROJECT_NAME}/
 )
