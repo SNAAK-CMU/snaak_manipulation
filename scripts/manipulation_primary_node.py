@@ -163,7 +163,7 @@ class ExecuteIngredientManipulationServer(Node):
             pickup_goal.depth = 0.3
         elif (bin_location == 'bin1'):
             pickup_goal.x = 0.63
-            pickup_goal.y = -0.302
+            pickup_goal.y = -0.41
             pickup_goal.depth = 0.3
 
         pickup_success = self.send_goal(self._pickup_action_client, pickup_goal)

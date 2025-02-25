@@ -5,7 +5,7 @@ def generate_launch_description():
     return launch.LaunchDescription([
         launch_ros.actions.Node(
             package='snaak_pneumatic',
-            executable='snaak_pneumatic_control.py',
+            executable='snaak_pneumatic_control',
             name='pneumatic_control'),
 
         launch_ros.actions.Node(
@@ -15,6 +15,6 @@ def generate_launch_description():
 
         launch_ros.actions.Node(
             package='snaak_manipulation',
-            executable='manipulations_primary_node.py',
+            executable='manipulation_primary_node.py',
             name='manipulation_primary_node')
     ])
