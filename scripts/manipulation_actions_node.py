@@ -98,7 +98,7 @@ class ManipulationActionServerNode(Node):
             [0.43, -0.52, 0.125, 0, 0, 0, 0.68, 0.07, 0.26]
         ])
 
-
+        self.add_on_shutdown_callback(self.shutdown_action_servers_callback)
         self.get_logger().info("Started Manipulation Action Server Node")
 
 
@@ -299,6 +299,21 @@ class ManipulationActionServerNode(Node):
         # self.fa._in_skill = False
         # self.fa.stop_skill()
 
+    def shutdown_action_servers_callback(self):
+        self.get_logger().info("Shutting down manipulation action servers...")
+
+        # Check if there are any ongoing goals in the action servers
+        for action_server in [self._traj_action_server, self._pickup_action_server, self._reset_arm_action_server]:
+            action_server_goal_handles = action_server._goal_handles
+            for goal_handle in action_server_goal_handles.values():
+                if goal_handle.get_status() != 3:  
+                    goal_handle.abort()  # Abort any active goal
+
+        self._traj_action_server.destroy()
+        self._pickup_action_server.destroy()
+        self._reset_arm_action_server.destroy()
+
+        self.get_logger().info("Action servers have been shut down.")
 
 def main(args=None):
     rclpy.init(args=args)
@@ -306,8 +321,11 @@ def main(args=None):
     try:
         rclpy.spin(manipulation_action_server)
     except KeyboardInterrupt:
-        pass
+        manipulation_action_server.get_logger().info('Keyboard interrupt received, shutting down...')
+    except Exception as e:
+        manipulation_action_server.get_logger().error(f'Error occurred: {e}')
     finally:
+        manipulation_action_server.shutdown_action_servers_callback()
         manipulation_action_server.destroy_node()
         rclpy.shutdown()
 
