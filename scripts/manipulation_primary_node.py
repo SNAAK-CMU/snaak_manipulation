@@ -30,20 +30,20 @@ class ExecuteIngredientManipulationServer(Node):
         self._manipulate_ingred_action_server = ActionServer(
             self,
             ManipulateIngredient,
-            'manipulation/manipulate_ingredient',
+            self.get_name() + '/manipulate_ingredient',
             self.execute_ingred_manipulation_callback
         )
 
         self._rth_action_server = ActionServer(
             self,
             ReturnToHome,
-            'manipulation/return_home',
+            self.get_name() +'/return_home',
             self.execute_rth_callback
         )
 
-        self._traj_action_client = ActionClient(self, FollowTrajectory, 'manipulation/follow_trajectory')
-        self._pickup_action_client = ActionClient(self, Pickup, 'manipulation/pickup')
-        self._reset_arm_action_client = ActionClient(self, ReturnToHome, 'manipulation/reset_arm')
+        self._traj_action_client = ActionClient(self, FollowTrajectory, self.get_name() + 'follow_trajectory')
+        self._pickup_action_client = ActionClient(self, Pickup, self.get_name() + '/pickup')
+        self._reset_arm_action_client = ActionClient(self, ReturnToHome, self.get_name() + '/reset_arm')
         self.wait_for_action_clients()
 
         self._disable_vacuum_client = self.create_client(Trigger, 'disable_vacuum')

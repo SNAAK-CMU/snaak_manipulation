@@ -25,21 +25,21 @@ class ManipulationActionServerNode(Node):
         self._traj_action_server = ActionServer(
             self,
             FollowTrajectory,
-            'manipulation/follow_trajectory',
+            self.get_name() + '/follow_trajectory',
             self.execute_trajectory_callback
         )
 
         self._pickup_action_server = ActionServer(
             self,
             Pickup,
-            'manipulation/pickup',
+            self.get_name() + '/pickup',
             self.execute_pickup_callback
         )
 
         self._reset_arm_action_server = ActionServer(
             self,
             ReturnToHome,
-            'manipulation/reset_arm',
+            self.get_name() + '/reset_arm',
             self.execute_reset_arm_callback
         )
 
