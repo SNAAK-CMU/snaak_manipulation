@@ -25,29 +25,27 @@ class ManipulationActionServerNode(Node):
         self._traj_action_server = ActionServer(
             self,
             FollowTrajectory,
-            'follow_trajectory',
+            'manipulation/follow_trajectory',
             self.execute_trajectory_callback
         )
 
         self._pickup_action_server = ActionServer(
             self,
             Pickup,
-            'pickup',
+            'manipulation/pickup',
             self.execute_pickup_callback
         )
 
         self._reset_arm_action_server = ActionServer(
             self,
             ReturnToHome,
-            'reset_arm',
+            'manipulation/reset_arm',
             self.execute_reset_arm_callback
         )
 
         self._enable_vacuum_client = self.create_client(Trigger, 'enable_vacuum')
         while not self._enable_vacuum_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('Vacuum enable service not available, waiting...')
-
-        self._req = Trigger.Request()
 
         self.fa = FrankaArm(init_rclpy=False)
 
@@ -180,12 +178,11 @@ class ManipulationActionServerNode(Node):
         try:
             destination_x = goal_handle.request.x
             destination_y = goal_handle.request.y
-            depth = goal_handle.request.depth
+            destination_z = goal_handle.request.z
 
             default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
             
             # move to x, y, and z directly above the bin
-            ingredient_depth = self.fa.get_pose().translation[2] - depth
             new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
             new_pose.translation = [destination_x, destination_y, self.pre_grasp_height]
             new_pose.rotation = default_rotation
@@ -195,7 +192,7 @@ class ManipulationActionServerNode(Node):
             
             # move down
             new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
-            new_pose.translation = [destination_x, destination_y, ingredient_depth] #x, y global, depth is relative to grasp height
+            new_pose.translation = [destination_x, destination_y, destination_z] #x, y global, depth is relative to grasp height
             new_pose.rotation = default_rotation
             self.fa.goto_pose(new_pose, cartesian_impedances=[3000, 3000, 300, 300, 300, 300], use_impedance=False, block=False)
             self.get_logger().info("Moving Down...")
@@ -203,7 +200,9 @@ class ManipulationActionServerNode(Node):
 
             # call the pneumatic node service
             # self.get_logger("Grasped!")
-            self.future = self._enable_vacuum_client.call_async(self._req)
+            enable_req = Trigger.Request()
+
+            self.future = self._enable_vacuum_client.call_async(enable_req)
             rclpy.spin_until_future_complete(self, self.future)
             time.sleep(2)
             # move up

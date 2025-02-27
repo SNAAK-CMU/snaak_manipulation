@@ -6,7 +6,8 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 from action_msgs.msg import GoalStatus
 from std_srvs.srv import Trigger
-
+from coordinates.srv import GetXYZFromImage
+from rclpy.time import Time
 
 from snaak_manipulation.action import FollowTrajectory, Pickup, ManipulateIngredient, ReturnToHome
 import time
@@ -29,25 +30,25 @@ class ExecuteIngredientManipulationServer(Node):
         self._manipulate_ingred_action_server = ActionServer(
             self,
             ManipulateIngredient,
-            'manipulate_ingredient',
+            'manipulation/manipulate_ingredient',
             self.execute_ingred_manipulation_callback
         )
 
         self._rth_action_server = ActionServer(
             self,
             ReturnToHome,
-            'return_home',
+            'manipulation/return_home',
             self.execute_rth_callback
         )
 
-        self._traj_action_client = ActionClient(self, FollowTrajectory, 'follow_trajectory')
-        self._pickup_action_client = ActionClient(self, Pickup, 'pickup')
-        self._reset_arm_action_client = ActionClient(self, ReturnToHome, 'reset_arm')
+        self._traj_action_client = ActionClient(self, FollowTrajectory, 'manipulation/follow_trajectory')
+        self._pickup_action_client = ActionClient(self, Pickup, 'manipulation/pickup')
+        self._reset_arm_action_client = ActionClient(self, ReturnToHome, 'manipulation/reset_arm')
         self.wait_for_action_clients()
 
         self._disable_vacuum_client = self.create_client(Trigger, 'disable_vacuum')
+        self._get_xyz_client = self.create_client(GetXYZFromImage, 'vision/get_pickup_point') #TODO confirm this
         self.wait_for_service_clients()
-        self._req = Trigger.Request()
 
         # Adding parameter callback so we can select which ingredient is where on the fly (may be useful later on)
         self.add_on_set_parameters_callback(self.parameters_callback)
@@ -150,24 +151,29 @@ class ExecuteIngredientManipulationServer(Node):
 
         time.sleep(2)
 
-        pickup_goal = Pickup.Goal()
 
         # TODO Replace this with vision values, these have been manually found
-        if (bin_location == 'bin2'):
-            pickup_goal.x = 0.44 
-            pickup_goal.y = -0.302
-            pickup_goal.depth = 0.29
-        elif (bin_location == 'bin3'):
-            pickup_goal.x = 0.24
-            pickup_goal.y = -0.302
-            pickup_goal.depth = 0.3
-        elif (bin_location == 'bin1'):
-            pickup_goal.x = 0.63
-            pickup_goal.y = -0.41
-            pickup_goal.depth = 0.3
+        coordRequest = GetXYZFromImage.Request()
+        coordRequest.bin_id = bin_location
+        coordRequest.timestamp = Time()
 
+        self.future = self._get_xyz_client.call_async(coordRequest)
+        rclpy.spin_until_future_complete(self, self.future)
+        result = self.future.result()
+
+        if (result.x == -1):
+            goal_handle.abort()
+            self.get_logger().error("Vision Unable to Get XYZ")
+            return ManipulateIngredient.Result()
+        
+        pickup_goal = Pickup.Goal()
+        pickup_goal.x = result.x
+        pickup_goal.y = result.y
+        pickup_goal.z = result.depth
+        self.get_logger().info(f"Camera XYZ: {pickup_goal.x}, {pickup_goal.y}, {pickup_goal.z}")
+            
         pickup_success = self.send_goal(self._pickup_action_client, pickup_goal)
-
+        result = self.future.result()
         if (not pickup_success):
             self.get_logger().error("Ingredient Pick-Up Failed")
             goal_handle.abort()
@@ -189,7 +195,9 @@ class ExecuteIngredientManipulationServer(Node):
             self.current_location = "assembly"
 
         time.sleep(2)
-        self.future = self._disable_vacuum_client.call_async(self._req)
+        disable_req = Trigger.Request()
+
+        self.future = self._disable_vacuum_client.call_async(disable_req)
         rclpy.spin_until_future_complete(self, self.future)
 
         # TODO add place manuever
