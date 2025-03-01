@@ -25,21 +25,21 @@ class ManipulationActionServerNode(Node):
         self._traj_action_server = ActionServer(
             self,
             FollowTrajectory,
-            self.get_name() + '/follow_trajectory',
+            'snaak_manipulation/follow_trajectory',
             self.execute_trajectory_callback
         )
 
         self._pickup_action_server = ActionServer(
             self,
             Pickup,
-            self.get_name() + '/pickup',
+            'snaak_manipulation/pickup',
             self.execute_pickup_callback
         )
 
         self._reset_arm_action_server = ActionServer(
             self,
             ReturnToHome,
-            self.get_name() + '/reset_arm',
+            'snaak_manipulation/reset_arm',
             self.execute_reset_arm_callback
         )
 
@@ -96,7 +96,7 @@ class ManipulationActionServerNode(Node):
             [0.43, -0.52, 0.125, 0, 0, 0, 0.68, 0.07, 0.26]
         ])
 
-        self.add_on_shutdown_callback(self.shutdown_action_servers_callback)
+        #self.add_on_shutdown_callback(self.shutdown_action_servers_callback)
         self.get_logger().info("Started Manipulation Action Server Node")
 
 
@@ -298,33 +298,33 @@ class ManipulationActionServerNode(Node):
         # self.fa._in_skill = False
         # self.fa.stop_skill()
 
-    def shutdown_action_servers_callback(self):
-        self.get_logger().info("Shutting down manipulation action servers...")
+    # def shutdown_action_servers_callback(self):
+    #     self.get_logger().info("Shutting down manipulation action servers...")
 
-        # Check if there are any ongoing goals in the action servers
-        for action_server in [self._traj_action_server, self._pickup_action_server, self._reset_arm_action_server]:
-            action_server_goal_handles = action_server._goal_handles
-            for goal_handle in action_server_goal_handles.values():
-                if goal_handle.get_status() != 3:  
-                    goal_handle.abort()  # Abort any active goal
+    #     # Check if there are any ongoing goals in the action servers
+    #     for action_server in [self._traj_action_server, self._pickup_action_server, self._reset_arm_action_server]:
+    #         action_server_goal_handles = action_server._goal_handles
+    #         for goal_handle in action_server_goal_handles.values():
+    #             if goal_handle.get_status() != 3:  
+    #                 goal_handle.abort()  # Abort any active goal
 
-        self._traj_action_server.destroy()
-        self._pickup_action_server.destroy()
-        self._reset_arm_action_server.destroy()
+    #     self._traj_action_server.destroy()
+    #     self._pickup_action_server.destroy()
+    #     self._reset_arm_action_server.destroy()
 
-        self.get_logger().info("Action servers have been shut down.")
+    #     self.get_logger().info("Action servers have been shut down.")
 
 def main(args=None):
     rclpy.init(args=args)
     manipulation_action_server = ManipulationActionServerNode()
     try:
         rclpy.spin(manipulation_action_server)
-    except KeyboardInterrupt:
-        manipulation_action_server.get_logger().info('Keyboard interrupt received, shutting down...')
+    # except KeyboardInterrupt:
+    #     manipulation_action_server.get_logger().info('Keyboard interrupt received, shutting down...')
     except Exception as e:
         manipulation_action_server.get_logger().error(f'Error occurred: {e}')
     finally:
-        manipulation_action_server.shutdown_action_servers_callback()
+        #manipulation_action_server.shutdown_action_servers_callback()
         manipulation_action_server.destroy_node()
         rclpy.shutdown()
 

@@ -6,7 +6,7 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 from action_msgs.msg import GoalStatus
 from std_srvs.srv import Trigger
-from coordinates.srv import GetXYZFromImage
+from snaak_vision.srv import GetXYZFromImage
 from rclpy.time import Time
 
 from snaak_manipulation.action import FollowTrajectory, Pickup, ManipulateIngredient, ReturnToHome
@@ -30,24 +30,24 @@ class ExecuteIngredientManipulationServer(Node):
         self._manipulate_ingred_action_server = ActionServer(
             self,
             ManipulateIngredient,
-            self.get_name() + '/manipulate_ingredient',
+            'snaak_manipulation/manipulate_ingredient',
             self.execute_ingred_manipulation_callback
         )
 
         self._rth_action_server = ActionServer(
             self,
             ReturnToHome,
-            self.get_name() +'/return_home',
+            'snaak_manipulation/return_home',
             self.execute_rth_callback
         )
 
-        self._traj_action_client = ActionClient(self, FollowTrajectory, self.get_name() + 'follow_trajectory')
-        self._pickup_action_client = ActionClient(self, Pickup, self.get_name() + '/pickup')
-        self._reset_arm_action_client = ActionClient(self, ReturnToHome, self.get_name() + '/reset_arm')
+        self._traj_action_client = ActionClient(self, FollowTrajectory, 'snaak_manipulation/follow_trajectory')
+        self._pickup_action_client = ActionClient(self, Pickup, 'snaak_manipulation/pickup')
+        self._reset_arm_action_client = ActionClient(self, ReturnToHome, 'snaak_manipulation/reset_arm')
         self.wait_for_action_clients()
 
         self._disable_vacuum_client = self.create_client(Trigger, 'disable_vacuum')
-        self._get_xyz_client = self.create_client(GetXYZFromImage, 'vision/get_pickup_point') #TODO confirm this
+        self._get_xyz_client = self.create_client(GetXYZFromImage, 'snaak_vision/get_pickup_point') #TODO confirm this
         self.wait_for_service_clients()
 
         # Adding parameter callback so we can select which ingredient is where on the fly (may be useful later on)
