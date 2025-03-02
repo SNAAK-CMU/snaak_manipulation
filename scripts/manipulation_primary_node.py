@@ -47,7 +47,7 @@ class ExecuteIngredientManipulationServer(Node):
         self.wait_for_action_clients()
 
         self._disable_vacuum_client = self.create_client(Trigger, 'disable_vacuum')
-        self._get_xyz_client = self.create_client(GetXYZFromImage, 'snaak_vision/get_pickup_point') #TODO confirm this
+        self._get_xyz_client = self.create_client(GetXYZFromImage, 'vision_node/get_pickup_point') #TODO confirm this
         self.wait_for_service_clients()
 
         # Adding parameter callback so we can select which ingredient is where on the fly (may be useful later on)
@@ -151,25 +151,15 @@ class ExecuteIngredientManipulationServer(Node):
 
         time.sleep(2)
 
-
-        # TODO Replace this with vision values, these have been manually found
-        coordRequest = GetXYZFromImage.Request()
-        coordRequest.bin_id = bin_location
-        coordRequest.timestamp = Time()
-
-        self.future = self._get_xyz_client.call_async(coordRequest)
-        rclpy.spin_until_future_complete(self, self.future)
-        result = self.future.result()
-
-        if (result.x == -1):
+        result = self.get_pickup_point(bin_location)
+        if result == None:
             goal_handle.abort()
-            self.get_logger().error("Vision Unable to Get XYZ")
             return ManipulateIngredient.Result()
         
         pickup_goal = Pickup.Goal()
         pickup_goal.x = result.x
         pickup_goal.y = result.y
-        pickup_goal.z = result.depth
+        pickup_goal.z = result.z
         self.get_logger().info(f"Camera XYZ: {pickup_goal.x}, {pickup_goal.y}, {pickup_goal.z}")
             
         pickup_success = self.send_goal(self._pickup_action_client, pickup_goal)
@@ -206,6 +196,25 @@ class ExecuteIngredientManipulationServer(Node):
 
 
         return ManipulateIngredient.Result()
+    
+    def get_pickup_point(self, bin_location):
+        # TODO Replace this with vision values, these have been manually found
+        coordRequest = GetXYZFromImage.Request()
+        coordRequest.bin_id = int(bin_location[-1])
+        # coordRequest.timestamp = Time()
+        coordRequest.timestamp = 1.0
+
+        self.future = self._get_xyz_client.call_async(coordRequest)
+        rclpy.spin_until_future_complete(self, self.future)
+        result = self.future.result()
+
+        if (result.x == -1):
+            self.get_logger().error("Unable to Get XYZ from Vision Node")
+            return None
+
+        self.get_logger().info(f"Result from Vision Node: {result.x}, {result.y}, {result.z}")
+
+        return result
 
     def reset_arm(self):
         reset_goal = ReturnToHome.Goal()
