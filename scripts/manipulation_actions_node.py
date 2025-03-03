@@ -2,14 +2,16 @@
 import numpy as np
 import pickle, time
 from frankapy import FrankaArm, SensorDataMessageType
+from frankapy import FrankaConstants as FC
 from frankapy.proto_utils import sensor_proto2ros_msg, make_sensor_group_msg
 from frankapy.proto import JointPositionSensorMessage, ShouldTerminateSensorMessage
 
 import rclpy
 from rclpy.action import ActionServer
 from rclpy.node import Node
-from snaak_manipulation.action import FollowTrajectory, Pickup
+from snaak_manipulation.action import FollowTrajectory, Pickup, ReturnToHome
 
+from std_srvs.srv import Trigger
 import os
 from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Transform, Vector3, Quaternion
@@ -23,32 +25,95 @@ class ManipulationActionServerNode(Node):
         self._traj_action_server = ActionServer(
             self,
             FollowTrajectory,
-            'follow_trajectory',
+            'snaak_manipulation/follow_trajectory',
             self.execute_trajectory_callback
         )
 
         self._pickup_action_server = ActionServer(
             self,
             Pickup,
-            'pickup',
+            'snaak_manipulation/pickup',
             self.execute_pickup_callback
         )
 
+        self._reset_arm_action_server = ActionServer(
+            self,
+            ReturnToHome,
+            'snaak_manipulation/reset_arm',
+            self.execute_reset_arm_callback
+        )
+
+        self._enable_vacuum_client = self.create_client(Trigger, 'enable_vacuum')
+        while not self._enable_vacuum_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('Vacuum enable service not available, waiting...')
+
         self.fa = FrankaArm(init_rclpy=False)
+
+        # Defining Constants
+        self.pre_grasp_height = 0.3
+
+        self.trajectory_file_map = {
+            1: 'home2bin1_verified.pkl',
+            2: 'home2bin2_verified.pkl',
+            3: 'home2bin3_verified.pkl',
+            4: 'home2assembly_verified.pkl',
+            5: 'bin12home_verified.pkl',
+            6: 'bin12assembly_verified.pkl',
+            7: 'bin22home_verified.pkl',
+            8: 'bin22assembly_verified.pkl',
+            9: 'bin32home_verified.pkl',
+            10: 'bin32assembly_verified.pkl',
+            11: 'assembly2home_verified.pkl',
+            12: 'assembly2bin1_verified.pkl',
+            13: 'assembly2bin2_verified.pkl',
+            14: 'assembly2bin3_verified.pkl'
+        }
+
+        # See collision_boxes.txt in /franka_settings for more detailed explanation
+        self.kiosk_collision_boxes = np.array([
+            # sides
+            [0.25, 0.55, 0.5, 0, 0, 0, 1.1, 0.01, 1.1],
+            [0.25, -0.55, 0.5, 0, 0, 0, 1.1, 0.01, 1.1],
+            # back
+            [-0.41, 0, 0.5, 0, 0, 0, 0.01, 1, 1.1], 
+            # front
+            [0.77, 0, 0.5, 0, 0, 0, 0.01, 1, 1.1],
+            # top
+            [0.25, 0, 1, 0, 0, 0, 1.2, 1, 0.01],
+            # bottom
+            [0.25, 0, -0.05, 0, 0, 0, 1.2, 1, 0.01],
+            
+            # sandwich assembly area
+            [0.5, 0.25, 0.125, 0, 0, 0, 0.68, 0.695, 0.26],
+            
+            # right bin area
+            [0.43, -0.3615, 0.0, 0, 0, 0, 0.68, 0.375, 0.001],
+            [0.14, -0.3615, 0.125, 0, 0, 0, 0.08, 0.375, 0.26],
+            [0.344, -0.3615, 0.125, 0, 0, 0, 0.05, 0.375, 0.26],
+            [0.542, -0.3615, 0.125, 0, 0, 0, 0.05, 0.375, 0.26],
+            [0.75, -0.3615, 0.125, 0, 0, 0, 0.08, 0.375, 0.26],
+            [0.43, -0.215, 0.125, 0, 0, 0, 0.68, 0.07, 0.26],
+            [0.43, -0.52, 0.125, 0, 0, 0, 0.68, 0.07, 0.26]
+        ])
+
+        #self.add_on_shutdown_callback(self.shutdown_action_servers_callback)
         self.get_logger().info("Started Manipulation Action Server Node")
 
 
     def execute_trajectory_callback(self, goal_handle):
 
-        self.get_logger().info("Opening .pkl File...")
         traj_file_path = self.traj_id_to_file(goal_handle.request.traj_id)
         
         result = FollowTrajectory.Result()
 
-        if traj_file_path is None or not self.fa.is_skill_done:
+        if traj_file_path is None:
+            self.get_logger().error("Invalid Trajectory ID")
             goal_handle.abort()
             return result
-        else:
+        
+        self.fa.wait_for_skill() # in case other skill is running
+
+        try:
             self.get_logger().info('Executing Trajectory...')
             self.execute_trajectory(traj_file_path)
 
@@ -74,13 +139,31 @@ class ManipulationActionServerNode(Node):
 
             goal_handle.succeed()
             result.end_pose = transform
+        except Exception as e:
+            self.get_logger().error(f"Error Occured during trajectory following {e} ")
+            goal_handle.abort()
+            raise e
+        finally:
             return result
     
     def wait_for_skill_with_collision_check(self):
         while(not self.fa.is_skill_done()):  # looping, and at each iteration detect if arm is in collision with boxes (this uses the frankapy boxes)
-            if (self.fa.is_joints_in_collision_with_boxes()):
+            if (self.fa.is_joints_in_collision_with_boxes(boxes=self.kiosk_collision_boxes)):
                 self.fa.stop_skill() # this seems to make the motion break, but it does prevent collision
                 raise Exception("In Collision with boxes, cancelling motion")
+
+    def execute_reset_arm_callback(self, goal_handle):
+        self.get_logger().info('Resetting Arm')
+        try:
+            self.fa.reset_joints()
+            goal_handle.succeed()
+        except Exception as e:
+            self.get_logger().info('Error During Return to Home')
+            goal_handle.abort()
+            raise e
+        finally:
+            return ReturnToHome.Result()
+
 
     def execute_pickup_callback(self, goal_handle):
 
@@ -89,29 +172,27 @@ class ManipulationActionServerNode(Node):
         # move down to pick up
         # send service/action call to start vaccuum and wait for response
         # move up
-
         success = False
         result = Pickup.Result()
-
+        self.fa.wait_for_skill() # in case other skill is running
         try:
             destination_x = goal_handle.request.x
             destination_y = goal_handle.request.y
-            depth = goal_handle.request.depth
+            destination_z = goal_handle.request.z
 
             default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
-            # move to x, y
-            z_pre_grasp = self.fa.get_pose().translation[2]
+            
+            # move to x, y, and z directly above the bin
             new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
-            new_pose.translation = [destination_x, destination_y, z_pre_grasp]
+            new_pose.translation = [destination_x, destination_y, self.pre_grasp_height]
             new_pose.rotation = default_rotation
-            self.fa.goto_pose(new_pose, cartesian_impedances=[3000, 3000, 300, 300, 300, 300], use_impedance=False, block=False)
+            self.fa.goto_pose(new_pose, cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, use_impedance=False, block=False) # TODO Issue when going to furthest out bin
             self.get_logger().info("Moving above grasp point...")
             self.wait_for_skill_with_collision_check()
             
             # move down
-            #new_pose = self.fa.get_pose()
             new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
-            new_pose.translation = [destination_x, destination_y, z_pre_grasp - depth] #x, y global, depth is relative TODO: confirm this
+            new_pose.translation = [destination_x, destination_y, destination_z] #x, y global, depth is relative to grasp height
             new_pose.rotation = default_rotation
             self.fa.goto_pose(new_pose, cartesian_impedances=[3000, 3000, 300, 300, 300, 300], use_impedance=False, block=False)
             self.get_logger().info("Moving Down...")
@@ -119,10 +200,14 @@ class ManipulationActionServerNode(Node):
 
             # call the pneumatic node service
             # self.get_logger("Grasped!")
+            enable_req = Trigger.Request()
+
+            self.future = self._enable_vacuum_client.call_async(enable_req)
+            rclpy.spin_until_future_complete(self, self.future)
             time.sleep(2)
             # move up
             new_pose = self.fa.get_pose()
-            new_pose.translation[2] = z_pre_grasp
+            new_pose.translation[2] = self.pre_grasp_height
             new_pose.rotation = default_rotation
             self.fa.goto_pose(new_pose, cartesian_impedances=[3000, 3000, 300, 300, 300, 300], use_impedance=False, block=False)
             self.get_logger().info("Moving up...")
@@ -155,23 +240,15 @@ class ManipulationActionServerNode(Node):
                 w=q[3]
             )
             result.end_pose = transform
+
             return result  
 
     def traj_id_to_file(self, traj_id):
         package_share_directory = get_package_share_directory('snaak_manipulation')
         pkl_file_name = None
-        match traj_id:
-            case 1:
-                pkl_file_name = "home2bin1_cam_verified.pkl"
-            case 2:
-                pkl_file_name = "home2bin2_cam_verified.pkl"
-            case 3:
-                pkl_file_name = "home2bin3_cam_verified.pkl"
-            case 4:
-                pkl_file_name = "home_assembly_traj.pkl"
-        
-        if pkl_file_name is None:
-            self.get_logger().info('Invalid Trajectory Entered')
+        if traj_id in self.trajectory_file_map:
+            pkl_file_name = self.trajectory_file_map[traj_id]
+        else:
             return None
         
         traj_file_path = os.path.join(package_share_directory, pkl_file_name)
@@ -189,10 +266,6 @@ class ManipulationActionServerNode(Node):
         dt = 0.01
 
         joints_traj = skill_state_dict['q']
-
-
-        # Goto the first position in the trajectory.
-        #fa.log_info('Initializing Sensor Publisher')
 
         # go to initial pose if needed, this is more a safety feature, should not be relied on
         self.fa.goto_joints(joints_traj[0])
@@ -225,15 +298,33 @@ class ManipulationActionServerNode(Node):
         # self.fa._in_skill = False
         # self.fa.stop_skill()
 
+    # def shutdown_action_servers_callback(self):
+    #     self.get_logger().info("Shutting down manipulation action servers...")
+
+    #     # Check if there are any ongoing goals in the action servers
+    #     for action_server in [self._traj_action_server, self._pickup_action_server, self._reset_arm_action_server]:
+    #         action_server_goal_handles = action_server._goal_handles
+    #         for goal_handle in action_server_goal_handles.values():
+    #             if goal_handle.get_status() != 3:  
+    #                 goal_handle.abort()  # Abort any active goal
+
+    #     self._traj_action_server.destroy()
+    #     self._pickup_action_server.destroy()
+    #     self._reset_arm_action_server.destroy()
+
+    #     self.get_logger().info("Action servers have been shut down.")
 
 def main(args=None):
     rclpy.init(args=args)
     manipulation_action_server = ManipulationActionServerNode()
     try:
         rclpy.spin(manipulation_action_server)
-    except KeyboardInterrupt:
-        pass
+    # except KeyboardInterrupt:
+    #     manipulation_action_server.get_logger().info('Keyboard interrupt received, shutting down...')
+    except Exception as e:
+        manipulation_action_server.get_logger().error(f'Error occurred: {e}')
     finally:
+        #manipulation_action_server.shutdown_action_servers_callback()
         manipulation_action_server.destroy_node()
         rclpy.shutdown()
 

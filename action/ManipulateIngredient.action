@@ -1,4 +1,4 @@
-int32 ingredient_id
+string ingredient_id
 ---
 # TODO: want any result?
 ---

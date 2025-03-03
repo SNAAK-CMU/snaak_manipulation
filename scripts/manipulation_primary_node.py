@@ -5,6 +5,9 @@ from rclpy.action import ActionClient, ActionServer
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from action_msgs.msg import GoalStatus
+from std_srvs.srv import Trigger
+from snaak_vision.srv import GetXYZFromImage
+from rclpy.time import Time
 
 from snaak_manipulation.action import FollowTrajectory, Pickup, ManipulateIngredient, ReturnToHome
 import time
@@ -14,9 +17,9 @@ class ExecuteIngredientManipulationServer(Node):
     def __init__(self):
         super().__init__('ingredient_manipulation_server')
 
-        self.declare_parameter('ham_bin_id', 1)
-        self.declare_parameter('cheese_bin_id', 2)
-        self.declare_parameter('bread_bin_id', 3)
+        self.declare_parameter('ham_bin_id', 'bin1')
+        self.declare_parameter('cheese_bin_id', 'bin2')
+        self.declare_parameter('bread_bin_id', 'bin3')
 
         self.bin_id = {
             'cheese_bin_id': self.get_parameter('cheese_bin_id').value,
@@ -24,37 +27,68 @@ class ExecuteIngredientManipulationServer(Node):
             'bread_bin_id': self.get_parameter('bread_bin_id').value
         }
 
-        self._action_server = ActionServer(
+        self._manipulate_ingred_action_server = ActionServer(
             self,
             ManipulateIngredient,
-            'manipulate_ingredient',
+            'snaak_manipulation/manipulate_ingredient',
             self.execute_ingred_manipulation_callback
         )
 
-        self._action_server = ActionServer(
+        self._rth_action_server = ActionServer(
             self,
             ReturnToHome,
-            'return_home',
+            'snaak_manipulation/return_home',
             self.execute_rth_callback
         )
 
-        self._traj_action_client = ActionClient(self, FollowTrajectory, 'follow_trajectory')
-        self._pickup_action_client = ActionClient(self, Pickup, 'pickup')
-        
+        self._traj_action_client = ActionClient(self, FollowTrajectory, 'snaak_manipulation/follow_trajectory')
+        self._pickup_action_client = ActionClient(self, Pickup, 'snaak_manipulation/pickup')
+        self._reset_arm_action_client = ActionClient(self, ReturnToHome, 'snaak_manipulation/reset_arm')
+        self.wait_for_action_clients()
+
+        self._disable_vacuum_client = self.create_client(Trigger, 'disable_vacuum')
+        self._get_xyz_client = self.create_client(GetXYZFromImage, 'vision_node/get_pickup_point') #TODO confirm this
+        self.wait_for_service_clients()
+
         # Adding parameter callback so we can select which ingredient is where on the fly (may be useful later on)
         self.add_on_set_parameters_callback(self.parameters_callback)
 
         self.get_logger().info("Started Manipulation Primary Node")
         
-        self.current_location = 0  # 0 is home, 1 - 3 are bins, 4 is assembly
+        self.current_location = 'home'
 
         self.trajectory_map = {
-            0: {1: 1, 2: 2, 3: 3, 4: 4},    # From home to bins 1-3 and assembly
-            1: {0: 5, 4: 6},                # From bin 1 to home and assembly
-            2: {0: 7, 4: 8},                # From bin 2 to home and assembly
-            3: {0: 9, 4: 10},               # From bin 3 to home and assembly
-            4: {0: 11, 1: 12, 2: 13, 3: 14} # From assembly to bins 1-3 and home
+            'home': {'bin1': 1, 'bin2': 2, 'bin3': 3, 'assembly': 4},
+            'bin1': {'home': 5, 'assembly': 6},
+            'bin2': {'home': 7, 'assembly': 8},
+            'bin3': {'home': 9, 'assembly': 10},
+            'assembly': {'home': 11, 'bin1': 12, 'bin2': 13, 'bin3': 14}
         }
+
+        reset_success = self.reset_arm()
+        if not reset_success:
+            self.get_logger().info('Reset Arm Failed')
+            rclpy.shutdown()
+
+    def wait_for_service_clients(self):
+        while not self._disable_vacuum_client.wait_for_service(timeout_sec=1.0):
+            self.get_logger().info('Vacuum disable service not available, waiting...')
+        self.get_logger().info('All services are ready!')
+
+
+    def wait_for_action_clients(self):
+        clients = [
+            ('follow_trajectory', self._traj_action_client),
+            ('pickup', self._pickup_action_client),
+            ('reset_arm', self._reset_arm_action_client)
+        ]
+        
+        for client_name, client in clients:
+            self.get_logger().info(f'Waiting for {client_name} action client...')
+            client.wait_for_server()
+            self.get_logger().info(f'{client_name} action client is ready!')
+
+        self.get_logger().info('All action clients are ready!')
 
     def parameters_callback(self, parameter_list):
         for parameter in parameter_list:
@@ -87,22 +121,58 @@ class ExecuteIngredientManipulationServer(Node):
     def execute_ingred_manipulation_callback(self, goal_handle):
         # Considering ingredient 0 is cheese, 1 is ham, and 2 is bread
         ingredient_id = goal_handle.request.ingredient_id
-        self.current_location = 0 # TODO this is temporary, until we have more trajectories generated
         bin_location = None
-        match ingredient_id:
-            case 0:
-                bin_location = self.bin_id["cheese_bin_id"]
-            case 1:
-                bin_location = self.bin_id["ham_bin_id"]
-            case 2:
-                bin_location = self.bin_id["bread_bin_id"]
+        self.get_logger().info(f"Manipulating {ingredient_id}...")
+
+        if (ingredient_id == 'cheese'):
+            bin_location = self.bin_id["cheese_bin_id"]
+        elif (ingredient_id == 'ham'):
+            bin_location = self.bin_id["ham_bin_id"]
+        elif (ingredient_id == 'bread'):
+            bin_location = self.bin_id["bread_bin_id"]
 
         if bin_location == None:
             self.get_logger().info("Invalid Ingredient ID Given")
             goal_handle.abort()
             return ManipulateIngredient()
+        
+        if not self.current_location == bin_location:
+            traj_id = self.trajectory_map[self.current_location][bin_location]
+            traj_goal = FollowTrajectory.Goal()
+            traj_goal.traj_id = traj_id
 
-        traj_id = self.trajectory_map[self.current_location][bin_location]
+            traj_success = self.send_goal(self._traj_action_client, traj_goal)
+
+            if (not traj_success):
+                goal_handle.abort()
+                self.get_logger().error("Trajectory Following Failed")
+                return ManipulateIngredient.Result()
+            else:
+                self.current_location = bin_location
+
+            time.sleep(2)
+
+        result = self.get_pickup_point(bin_location)
+        if result == None:
+            goal_handle.abort()
+            return ManipulateIngredient.Result()
+        
+        pickup_goal = Pickup.Goal()
+        pickup_goal.x = result.x
+        pickup_goal.y = result.y
+        pickup_goal.z = result.z
+        self.get_logger().info(f"Camera XYZ: {pickup_goal.x}, {pickup_goal.y}, {pickup_goal.z}")
+            
+        pickup_success = self.send_goal(self._pickup_action_client, pickup_goal)
+        result = self.future.result()
+        if (not pickup_success):
+            self.get_logger().error("Ingredient Pick-Up Failed")
+            goal_handle.abort()
+            return ManipulateIngredient.Result()
+
+        # TODO Add weighing scale service call to determine if we actually grabbed the ingredient
+
+        traj_id = self.trajectory_map[self.current_location]["assembly"]
         traj_goal = FollowTrajectory.Goal()
         traj_goal.traj_id = traj_id
 
@@ -113,51 +183,63 @@ class ExecuteIngredientManipulationServer(Node):
             self.get_logger().error("Trajectory Following Failed")
             return ManipulateIngredient.Result()
         else:
-            self.current_location = bin_location
+            self.current_location = "assembly"
 
         time.sleep(2)
+        disable_req = Trigger.Request()
 
-        pickup_goal = Pickup.Goal()
+        self.future = self._disable_vacuum_client.call_async(disable_req)
+        rclpy.spin_until_future_complete(self, self.future)
 
-        # TODO Replace this with vision values, these have been manually found
-        if (bin_location == 2):
-            pickup_goal.x = 0.447 
-            pickup_goal.y = -0.302
-            pickup_goal.depth = 0.23
-        elif (bin_location == 3):
-            pickup_goal.x = 0.24
-            pickup_goal.y = -0.302
-            pickup_goal.depth = 0.3
-
-        pickup_success = self.send_goal(self._pickup_action_client, pickup_goal)
-
-        if (not pickup_success):
-            self.get_logger().error("Ingredient Pick-Up Failed")
-            goal_handle.abort()
-            return ManipulateIngredient.Result()
-        else:
-            self.current_location = bin_location
-
+        # TODO add place manuever
         goal_handle.succeed()
+        self.get_logger().info("Manipulation Succesful!")
 
 
-        # TODO add trajectory following to assembly area and placing ingredient
         return ManipulateIngredient.Result()
+    
+    def get_pickup_point(self, bin_location):
+        # TODO Replace this with vision values, these have been manually found
+        coordRequest = GetXYZFromImage.Request()
+        coordRequest.bin_id = int(bin_location[-1])
+        # coordRequest.timestamp = Time()
+        coordRequest.timestamp = 1.0
 
+        self.future = self._get_xyz_client.call_async(coordRequest)
+        rclpy.spin_until_future_complete(self, self.future)
+        result = self.future.result()
 
+        if (result.x == -1):
+            self.get_logger().error("Unable to Get XYZ from Vision Node")
+            return None
+
+        self.get_logger().info(f"Result from Vision Node: {result.x}, {result.y}, {result.z}")
+
+        return result
+
+    def reset_arm(self):
+        reset_goal = ReturnToHome.Goal()
+        success = self.send_goal(self._reset_arm_action_client, reset_goal)
+        return success
+    
     def execute_rth_callback(self, goal_handle):
-        traj_id = self.trajectory_map[self.current_location][0]
-        traj_goal = FollowTrajectory.Goal()
-        traj_goal.traj_id = traj_id
+        result = ReturnToHome.Result()
+        if self.current_location == 'home':
+            success = self.reset_arm()
+        else:
+            traj_id = self.trajectory_map[self.current_location]['home']
+            traj_goal = FollowTrajectory.Goal()
+            traj_goal.traj_id = traj_id
+            success = self.send_goal(self._traj_action_client, traj_goal)
 
-
-        success = self.send_goal(self._traj_action_client, traj_goal)
         if (not success):
             goal_handle.abort()
             self.get_logger().error("Return To Home Failed")
-            return ReturnToHome.Result()
+            return result
         else:
-            self.current_location = 0
+            self.current_location = 'home'
+            goal_handle.succeed()
+            return result
 
 def main(args=None):
     rclpy.init(args=args)
