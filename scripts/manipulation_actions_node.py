@@ -25,29 +25,27 @@ class ManipulationActionServerNode(Node):
         self._traj_action_server = ActionServer(
             self,
             FollowTrajectory,
-            'follow_trajectory',
+            'snaak_manipulation/follow_trajectory',
             self.execute_trajectory_callback
         )
 
         self._pickup_action_server = ActionServer(
             self,
             Pickup,
-            'pickup',
+            'snaak_manipulation/pickup',
             self.execute_pickup_callback
         )
 
         self._reset_arm_action_server = ActionServer(
             self,
             ReturnToHome,
-            'reset_arm',
+            'snaak_manipulation/reset_arm',
             self.execute_reset_arm_callback
         )
 
         self._enable_vacuum_client = self.create_client(Trigger, 'enable_vacuum')
         while not self._enable_vacuum_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('Vacuum enable service not available, waiting...')
-
-        self._req = Trigger.Request()
 
         self.fa = FrankaArm(init_rclpy=False)
 
@@ -98,7 +96,7 @@ class ManipulationActionServerNode(Node):
             [0.43, -0.52, 0.125, 0, 0, 0, 0.68, 0.07, 0.26]
         ])
 
-
+        #self.add_on_shutdown_callback(self.shutdown_action_servers_callback)
         self.get_logger().info("Started Manipulation Action Server Node")
 
 
@@ -180,12 +178,11 @@ class ManipulationActionServerNode(Node):
         try:
             destination_x = goal_handle.request.x
             destination_y = goal_handle.request.y
-            depth = goal_handle.request.depth
+            destination_z = goal_handle.request.z
 
             default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
             
             # move to x, y, and z directly above the bin
-            ingredient_depth = self.fa.get_pose().translation[2] - depth
             new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
             new_pose.translation = [destination_x, destination_y, self.pre_grasp_height]
             new_pose.rotation = default_rotation
@@ -195,7 +192,7 @@ class ManipulationActionServerNode(Node):
             
             # move down
             new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
-            new_pose.translation = [destination_x, destination_y, ingredient_depth] #x, y global, depth is relative to grasp height
+            new_pose.translation = [destination_x, destination_y, destination_z] #x, y global, depth is relative to grasp height
             new_pose.rotation = default_rotation
             self.fa.goto_pose(new_pose, cartesian_impedances=[3000, 3000, 300, 300, 300, 300], use_impedance=False, block=False)
             self.get_logger().info("Moving Down...")
@@ -203,7 +200,9 @@ class ManipulationActionServerNode(Node):
 
             # call the pneumatic node service
             # self.get_logger("Grasped!")
-            self.future = self._enable_vacuum_client.call_async(self._req)
+            enable_req = Trigger.Request()
+
+            self.future = self._enable_vacuum_client.call_async(enable_req)
             rclpy.spin_until_future_complete(self, self.future)
             time.sleep(2)
             # move up
@@ -299,15 +298,33 @@ class ManipulationActionServerNode(Node):
         # self.fa._in_skill = False
         # self.fa.stop_skill()
 
+    # def shutdown_action_servers_callback(self):
+    #     self.get_logger().info("Shutting down manipulation action servers...")
+
+    #     # Check if there are any ongoing goals in the action servers
+    #     for action_server in [self._traj_action_server, self._pickup_action_server, self._reset_arm_action_server]:
+    #         action_server_goal_handles = action_server._goal_handles
+    #         for goal_handle in action_server_goal_handles.values():
+    #             if goal_handle.get_status() != 3:  
+    #                 goal_handle.abort()  # Abort any active goal
+
+    #     self._traj_action_server.destroy()
+    #     self._pickup_action_server.destroy()
+    #     self._reset_arm_action_server.destroy()
+
+    #     self.get_logger().info("Action servers have been shut down.")
 
 def main(args=None):
     rclpy.init(args=args)
     manipulation_action_server = ManipulationActionServerNode()
     try:
         rclpy.spin(manipulation_action_server)
-    except KeyboardInterrupt:
-        pass
+    # except KeyboardInterrupt:
+    #     manipulation_action_server.get_logger().info('Keyboard interrupt received, shutting down...')
+    except Exception as e:
+        manipulation_action_server.get_logger().error(f'Error occurred: {e}')
     finally:
+        #manipulation_action_server.shutdown_action_servers_callback()
         manipulation_action_server.destroy_node()
         rclpy.shutdown()
 
