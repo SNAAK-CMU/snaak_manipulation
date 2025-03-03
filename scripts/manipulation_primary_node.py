@@ -135,21 +135,22 @@ class ExecuteIngredientManipulationServer(Node):
             self.get_logger().info("Invalid Ingredient ID Given")
             goal_handle.abort()
             return ManipulateIngredient()
+        
+        if not self.current_location == bin_location:
+            traj_id = self.trajectory_map[self.current_location][bin_location]
+            traj_goal = FollowTrajectory.Goal()
+            traj_goal.traj_id = traj_id
 
-        traj_id = self.trajectory_map[self.current_location][bin_location]
-        traj_goal = FollowTrajectory.Goal()
-        traj_goal.traj_id = traj_id
+            traj_success = self.send_goal(self._traj_action_client, traj_goal)
 
-        traj_success = self.send_goal(self._traj_action_client, traj_goal)
+            if (not traj_success):
+                goal_handle.abort()
+                self.get_logger().error("Trajectory Following Failed")
+                return ManipulateIngredient.Result()
+            else:
+                self.current_location = bin_location
 
-        if (not traj_success):
-            goal_handle.abort()
-            self.get_logger().error("Trajectory Following Failed")
-            return ManipulateIngredient.Result()
-        else:
-            self.current_location = bin_location
-
-        time.sleep(2)
+            time.sleep(2)
 
         result = self.get_pickup_point(bin_location)
         if result == None:
