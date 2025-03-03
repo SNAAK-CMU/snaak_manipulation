@@ -269,34 +269,33 @@ class ManipulationActionServerNode(Node):
 
         # go to initial pose if needed, this is more a safety feature, should not be relied on
         self.fa.goto_joints(joints_traj[0])
-        self.fa.goto_joints(joints_traj[-1])
-        # # To ensure skill doesn't end before completing trajectory, make the buffer time much longer than needed
-        # self.fa.goto_joints(joints_traj[1], duration=T, dynamic=True, buffer_time=10)
-        # init_time = self.fa.get_time()
-        # for i in range(2, len(joints_traj)):
-        #     traj_gen_proto_msg = JointPositionSensorMessage(
-        #         id=i, timestamp=self.fa.get_time() - init_time, 
-        #         joints=joints_traj[i]
-        #     )
-        #     self.get_logger().info(f'joint angles: {joints_traj[i]}')
 
-        #     ros_msg = make_sensor_group_msg(
-        #         trajectory_generator_sensor_msg=sensor_proto2ros_msg(
-        #             traj_gen_proto_msg, SensorDataMessageType.JOINT_POSITION)
-        #     )
+        # # To ensure skill doesn't end before completing trajectory, make the buffer time much longer than needed
+        self.fa.goto_joints(joints_traj[1], duration=T, dynamic=True, buffer_time=10)
+        init_time = self.fa.get_time()
+        for i in range(2, len(joints_traj)):
+            traj_gen_proto_msg = JointPositionSensorMessage(
+                id=i, timestamp=self.fa.get_time() - init_time, 
+                joints=joints_traj[i]
+            )
+            self.get_logger().info(f'joint angles: {joints_traj[i]}')
+
+            ros_msg = make_sensor_group_msg(
+                trajectory_generator_sensor_msg=sensor_proto2ros_msg(
+                    traj_gen_proto_msg, SensorDataMessageType.JOINT_POSITION)
+            )
             
-        #     #fa.log_info('Publishing: ID {}'.format(traj_gen_proto_msg.id))
-        #     self.fa.publish_sensor_data(ros_msg)
-        #     time.sleep(dt)
+            #fa.log_info('Publishing: ID {}'.format(traj_gen_proto_msg.id))
+            self.fa.publish_sensor_data(ros_msg)
+            time.sleep(dt)
     
-        # term_proto_msg = ShouldTerminateSensorMessage(timestamp=self.fa.get_time() - init_time, should_terminate=True)
-        # ros_msg = make_sensor_group_msg(
-        #     termination_handler_sensor_msg=sensor_proto2ros_msg(
-        #         term_proto_msg, SensorDataMessageType.SHOULD_TERMINATE)
-        #     )
-        # self.fa.publish_sensor_data(ros_msg)
-        # self.fa._in_skill = False
-        # self.fa.stop_skill()
+        term_proto_msg = ShouldTerminateSensorMessage(timestamp=self.fa.get_time() - init_time, should_terminate=True)
+        ros_msg = make_sensor_group_msg(
+            termination_handler_sensor_msg=sensor_proto2ros_msg(
+                term_proto_msg, SensorDataMessageType.SHOULD_TERMINATE)
+            )
+        self.fa.publish_sensor_data(ros_msg)
+        self.fa.wait_for_skill()
 
     # def shutdown_action_servers_callback(self):
     #     self.get_logger().info("Shutting down manipulation action servers...")
