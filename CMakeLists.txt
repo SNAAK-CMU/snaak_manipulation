@@ -29,8 +29,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 )
 
 install(PROGRAMS
-  scripts/manipulation_actions_node.py
-  scripts/manipulation_primary_node.py
+  scripts/manipulation_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

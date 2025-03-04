@@ -42,6 +42,7 @@ class ManipulationActionServerNode(Node):
             'snaak_manipulation/reset_arm',
             self.execute_reset_arm_callback
         )
+        
 
         self._enable_vacuum_client = self.create_client(Trigger, 'enable_vacuum')
         while not self._enable_vacuum_client.wait_for_service(timeout_sec=1.0):
@@ -270,8 +271,7 @@ class ManipulationActionServerNode(Node):
         # go to initial pose if needed, this is more a safety feature, should not be relied on
         self.fa.goto_joints(joints_traj[0])
 
-        # # To ensure skill doesn't end before completing trajectory, make the buffer time much longer than needed
-        self.fa.goto_joints(joints_traj[1], duration=T, dynamic=True, buffer_time=10)
+        self.fa.goto_joints(joints_traj[1], duration=T, dynamic=True, buffer_time=1)
         init_time = self.fa.get_time()
         for i in range(2, len(joints_traj)):
             traj_gen_proto_msg = JointPositionSensorMessage(
@@ -297,33 +297,14 @@ class ManipulationActionServerNode(Node):
         self.fa.publish_sensor_data(ros_msg)
         self.fa.wait_for_skill()
 
-    # def shutdown_action_servers_callback(self):
-    #     self.get_logger().info("Shutting down manipulation action servers...")
-
-    #     # Check if there are any ongoing goals in the action servers
-    #     for action_server in [self._traj_action_server, self._pickup_action_server, self._reset_arm_action_server]:
-    #         action_server_goal_handles = action_server._goal_handles
-    #         for goal_handle in action_server_goal_handles.values():
-    #             if goal_handle.get_status() != 3:  
-    #                 goal_handle.abort()  # Abort any active goal
-
-    #     self._traj_action_server.destroy()
-    #     self._pickup_action_server.destroy()
-    #     self._reset_arm_action_server.destroy()
-
-    #     self.get_logger().info("Action servers have been shut down.")
-
 def main(args=None):
     rclpy.init(args=args)
     manipulation_action_server = ManipulationActionServerNode()
     try:
         rclpy.spin(manipulation_action_server)
-    # except KeyboardInterrupt:
-    #     manipulation_action_server.get_logger().info('Keyboard interrupt received, shutting down...')
     except Exception as e:
         manipulation_action_server.get_logger().error(f'Error occurred: {e}')
     finally:
-        #manipulation_action_server.shutdown_action_servers_callback()
         manipulation_action_server.destroy_node()
         rclpy.shutdown()
 
