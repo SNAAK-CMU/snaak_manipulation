@@ -8,7 +8,7 @@ from frankapy.proto import JointPositionSensorMessage, ShouldTerminateSensorMess
 import rclpy
 from rclpy.action import ActionServer
 from rclpy.node import Node
-from snaak_manipulation.action import FollowTrajectory, Pickup, ReturnToHome, ManipulateIngredient
+from snaak_manipulation.action import FollowTrajectory, Pickup, ReturnToHome, ManipulateIngredient, Place
 from snaak_vision.srv import GetXYZFromImage
 
 from std_srvs.srv import Trigger
@@ -17,6 +17,8 @@ from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Transform, Vector3, Quaternion
 import tf_transformations
 from autolab_core import RigidTransform
+from example_interfaces.srv import SetBool
+
 
 from manipulation_constants import TRAJECTORY_FILE_MAP, TRAJECTORY_MAP, KIOSK_COLLISION_BOXES
 
@@ -28,11 +30,15 @@ class ManipulationActionServerNode(Node):
         self.declare_parameter('ham_bin_id', 'bin1')
         self.declare_parameter('cheese_bin_id', 'bin2')
         self.declare_parameter('bread_bin_id', 'bin3')
+        self.declare_parameter('assembly_tray_id', '4')
+        self.declare_parameter('assembly_bread_id', '5')
 
         self.bin_id = {
             'cheese_bin_id': self.get_parameter('cheese_bin_id').value,
             'ham_bin_id': self.get_parameter('ham_bin_id').value,
-            'bread_bin_id': self.get_parameter('bread_bin_id').value
+            'bread_bin_id': self.get_parameter('bread_bin_id').value,
+            'assembly_tray_id': self.get_parameter('assembly_area_id').value,
+            'assembly_bread_id': self.get_parameter('assembly_bread_id').value
         }
         self.add_on_set_parameters_callback(self.parameters_callback)
 
@@ -48,6 +54,13 @@ class ManipulationActionServerNode(Node):
             Pickup,
             'snaak_manipulation/pickup',
             self.execute_pickup_callback
+        )
+
+        self._place_action_server = ActionServer(
+            self,
+            Place,
+            'snaak_manipulation/place',
+            self.execute_place_callback
         )
 
         self._manipulate_ingred_action_server = ActionServer(
@@ -66,6 +79,7 @@ class ManipulationActionServerNode(Node):
         
         self._disable_vacuum_client = self.create_client(Trigger, 'disable_vacuum')
         self._enable_vacuum_client = self.create_client(Trigger, 'enable_vacuum')
+        self._eject_vaccum_client = self.create_client(SetBool, 'eject_vacuum')
 
         self._get_xyz_client = self.create_client(GetXYZFromImage, 'vision_node/get_pickup_point')
         self.wait_for_service_clients()
@@ -88,7 +102,8 @@ class ManipulationActionServerNode(Node):
         clients = [
             ('disable_vaccuum', self._disable_vacuum_client),
             ('enable_vaccuum', self._enable_vacuum_client),
-            ('vision_node/get_pickup_point', self._get_xyz_client)
+            ('vision_node/get_pickup_point', self._get_xyz_client),
+            ('eject_vaccum', self._eject_vaccum_client) # use this instead of disable when placing?
         ]
         
         for client_name, client in clients:
@@ -313,7 +328,79 @@ class ManipulationActionServerNode(Node):
             )
             result.end_pose = transform
 
-            return result  
+            return result 
+
+    def execute_place_callback(self, goal_handle):
+        success = False
+        result = Place.Result()
+        try:
+            destination_x = goal_handle.request.x
+            destination_y = goal_handle.request.y
+            destination_z = goal_handle.request.z
+            ingredient_type = goal_handle.request.ingredient_type
+            if ingredient_type == 1:
+                self.execute_place_sliced(self, (destination_x, destination_y, destination_z))
+                success=True
+            elif ingredient_type == 2:
+                #TODO place bread
+                success = False
+            elif ingredient_type == 3:
+                #TODO place shredded
+                success = False
+            else:
+                raise "Invalid Ingredient Type"
+        except Exception as e:
+            self.get_logger().error(f"Error Occured during place motion {e} ")
+            goal_handle.abort()
+            raise e
+        finally:
+            if success: goal_handle.succeed()
+            pose = self.fa.get_pose()
+            transform = Transform()
+            transform.translation = Vector3(
+                x=pose.translation[0],
+                y=pose.translation[1],
+                z=pose.translation[2]
+            )
+
+            rotation_matrix = pose.rotation
+            transformation_matrix = np.eye(4)
+            transformation_matrix[:3, :3] = rotation_matrix
+
+            q = tf_transformations.quaternion_from_matrix(transformation_matrix)
+            transform.rotation = Quaternion(
+                x=q[0],
+                y=q[1],
+                z=q[2],
+                w=q[3]
+            )
+            result.end_pose = transform
+        
+    def execute_place_sliced(self, place_point):
+        # from pre-place position
+        # first move to x, y, z with z 5cm higher than the obtained place point z - dont want the arm with the ingredient to press into the sandwich, dropping the ingredient from 5cm above would be better
+        # send service call to release vaccuum and wait for response
+        # move back to pre-place position
+
+        self.fa.wait_for_skill()
+        destination_x, destination_y, destination_z = place_point
+        default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
+
+        # move to x, y, (z + 0.05)
+        new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
+        new_pose.translation = [destination_x, destination_y, destination_z+0.05]
+        new_pose.rotation = default_rotation
+        self.fa.goto_pose(new_pose, cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, use_impedance=False, block=False) # TODO Issue when going to furthest out bin
+        self.get_logger().info("Moving above release point...")
+        self.wait_for_skill_with_collision_check()
+
+        disable_req = Trigger.Request()
+        self.future = self._disable_vacuum_client.call_async(disable_req)
+        rclpy.spin_until_future_complete(self, self.future)
+        time.sleep(2)
+
+        #TODO add go to pre-place position and execute collision check
+
         
     def execute_ingred_manipulation_callback(self, goal_handle):
         # Considering ingredient 0 is cheese, 1 is ham, and 2 is bread
@@ -372,10 +459,6 @@ class ManipulationActionServerNode(Node):
         finally:
             self.current_location = "assembly"
             time.sleep(2)
-
-        disable_req = Trigger.Request() # TODO put this into place manuever
-        self.future = self._disable_vacuum_client.call_async(disable_req)
-        rclpy.spin_until_future_complete(self, self.future)
 
         # TODO add place manuever
         goal_handle.succeed()
