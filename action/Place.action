@@ -2,7 +2,7 @@ float32 x
 float32 y
 float32 z
 
-int ingredient_type
+int32 ingredient_type
 
 ---
 geometry_msgs/Transform end_pose
