@@ -16,6 +16,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Transform, Vector3, Quaternion
 import tf_transformations
+import sys
 
 from autolab_core import RigidTransform
 
@@ -302,12 +303,23 @@ def main(args=None):
     manipulation_action_server = ManipulationActionServerNode()
     try:
         rclpy.spin(manipulation_action_server)
+    except KeyboardInterrupt:
+        manipulation_action_server.get_logger().info('Keyboard interrupt received, shutting down...')
     except Exception as e:
         manipulation_action_server.get_logger().error(f'Error occurred: {e}')
     finally:
+        manipulation_action_server.fa.stop_robot_immediately()
+        # manipulation_action_server.shutdown_action_servers_callback()
         manipulation_action_server.destroy_node()
         rclpy.shutdown()
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nStopping script gracefully...")
+        # Perform cleanup actions here, such as closing files or releasing resources
+        print("Cleanup complete.")
+        sys.exit(0) # Exit with a status code of 0, indicating success
+    

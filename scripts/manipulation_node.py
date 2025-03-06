@@ -17,8 +17,9 @@ from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Transform, Vector3, Quaternion
 import tf_transformations
 from autolab_core import RigidTransform
+import sys
 
-from manipulation_constants import TRAJECTORY_FILE_MAP, TRAJECTORY_MAP, KIOSK_COLLISION_BOXES
+from scripts.manipulation_constants import TRAJECTORY_FILE_MAP, TRAJECTORY_MAP, KIOSK_COLLISION_BOXES
 
 class ManipulationActionServerNode(Node):
     def __init__(self):
@@ -93,7 +94,7 @@ class ManipulationActionServerNode(Node):
         
         for client_name, client in clients:
             self.get_logger().info(f'Waiting for {client_name} action client...')
-            client.wait_for_server()
+            client.wait_for_service()
             self.get_logger().info(f'{client_name} action client is ready!')
 
         self.get_logger().info('All service clients are ready!')
@@ -413,10 +414,17 @@ def main(args=None):
         rclpy.spin(manipulation_action_server)
     except Exception as e:
         manipulation_action_server.get_logger().error(f'Error occurred: {e}')
+    except KeyboardInterrupt:
+        manipulation_action_server.get_logger().info('Keyboard interrupt received, shutting down...')
     finally:
+        manipulation_action_server.fa.stop_robot_immediately()
         manipulation_action_server.destroy_node()
         rclpy.shutdown()
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("Stopping Gracefully...")
+        sys.exit(0)
