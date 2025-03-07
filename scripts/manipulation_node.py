@@ -4,11 +4,11 @@ import pickle, time
 from frankapy import FrankaArm, SensorDataMessageType
 from frankapy import FrankaConstants as FC
 from frankapy.proto_utils import sensor_proto2ros_msg, make_sensor_group_msg
-from frankapy.proto import JointPositionSensorMessage, ShouldTerminateSensorMessage
+from frankapy.proto import JointPositionSensorMessage, ShouldTerminateSensorMessage, PosePositionSensorMessage
 import rclpy
 from rclpy.action import ActionServer
 from rclpy.node import Node
-from snaak_manipulation.action import FollowTrajectory, Pickup, ReturnToHome, ManipulateIngredient
+from snaak_manipulation.action import FollowTrajectory, Pickup, ReturnToHome, ManipulateIngredient, Place
 from snaak_vision.srv import GetXYZFromImage
 
 from std_srvs.srv import Trigger
@@ -17,6 +17,9 @@ from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Transform, Vector3, Quaternion
 import tf_transformations
 from autolab_core import RigidTransform
+from example_interfaces.srv import SetBool
+from scipy.integrate import cumtrapz
+
 import sys
 
 from scripts.manipulation_constants import TRAJECTORY_FILE_MAP, TRAJECTORY_MAP, KIOSK_COLLISION_BOXES
@@ -29,11 +32,15 @@ class ManipulationActionServerNode(Node):
         self.declare_parameter('ham_bin_id', 'bin1')
         self.declare_parameter('cheese_bin_id', 'bin2')
         self.declare_parameter('bread_bin_id', 'bin3')
+        self.declare_parameter('assembly_tray_id', '4')
+        self.declare_parameter('assembly_bread_id', '5')
 
-        self.bin_id = {
+        self.location_id = {
             'cheese_bin_id': self.get_parameter('cheese_bin_id').value,
             'ham_bin_id': self.get_parameter('ham_bin_id').value,
-            'bread_bin_id': self.get_parameter('bread_bin_id').value
+            'bread_bin_id': self.get_parameter('bread_bin_id').value,
+            'assembly_tray_id': self.get_parameter('assembly_tray_id').value,
+            'assembly_bread_id': self.get_parameter('assembly_bread_id').value
         }
         self.add_on_set_parameters_callback(self.parameters_callback)
 
@@ -49,6 +56,13 @@ class ManipulationActionServerNode(Node):
             Pickup,
             'snaak_manipulation/pickup',
             self.execute_pickup_callback
+        )
+
+        self._place_action_server = ActionServer(
+            self,
+            Place,
+            'snaak_manipulation/place',
+            self.execute_place_callback
         )
 
         self._manipulate_ingred_action_server = ActionServer(
@@ -67,8 +81,10 @@ class ManipulationActionServerNode(Node):
         
         self._disable_vacuum_client = self.create_client(Trigger, 'disable_vacuum')
         self._enable_vacuum_client = self.create_client(Trigger, 'enable_vacuum')
+        self._eject_vaccum_client = self.create_client(SetBool, 'eject_vacuum')
 
-        self._get_xyz_client = self.create_client(GetXYZFromImage, 'vision_node/get_pickup_point')
+        self._get_pickup_xyz_client = self.create_client(GetXYZFromImage, 'snaak_vision/get_pickup_point')
+        self._get_place_xyz_client = self.create_client(GetXYZFromImage, 'snaak_vision/get_place_point')
         self.wait_for_service_clients()
 
         self.get_logger().info("Started Manipulation Node")
@@ -84,12 +100,42 @@ class ManipulationActionServerNode(Node):
         if not reset_success:
             self.get_logger().info('Reset Arm Failed')
             rclpy.shutdown()
+        
+        # Go to pre place position to localize tray
+        try:
+            # go to pre place position
+            self.get_logger().info("Moving to assembly area...")
+            home2assembly_fp = self.traj_id_to_file(4)
+            self.execute_trajectory(home2assembly_fp)
+            self.current_location = 'assembly'
+            self.get_logger().info(f"Maneuver complete, current location: {self.current_location}")
+
+            # call tray localization service
+            tray_center = self.get_point_XYZ(location=self.location_id['assembly_tray_id'], pickup=False)
+            self.get_logger().info(f"Got Tray Center: {tray_center.x}, {tray_center.y}, {tray_center.z}!")
+            # use this when placing the first bread slice
+
+            # go back home
+            self.get_logger().info("Going back to home...")
+            reset_success = self.reset_arm()
+            if not reset_success:
+                self.get_logger().info('Reset Arm Failed')
+                rclpy.shutdown()
+            self.get_logger().info(f"Arm Reset complete, current location: {self.current_location}")
+            
+        except Exception as e:
+            self.get_logger().error(f"Error Occured While Getting Tray Center")
+            raise e    
+        
+        self.bread_center = None
 
     def wait_for_service_clients(self):
         clients = [
             ('disable_vaccuum', self._disable_vacuum_client),
             ('enable_vaccuum', self._enable_vacuum_client),
-            ('vision_node/get_pickup_point', self._get_xyz_client)
+            ('snaak_vision/get_pickup_point', self._get_pickup_xyz_client),
+            ('snaak_vision/get_place_point', self._get_place_xyz_client),
+            ('eject_vaccum', self._eject_vaccum_client) # use this instead of disable when placing?
         ]
         
         for client_name, client in clients:
@@ -102,7 +148,7 @@ class ManipulationActionServerNode(Node):
     
     def parameters_callback(self, parameter_list):
         for parameter in parameter_list:
-            self.bin_id[parameter.name] = parameter.value
+            self.location_id_id[parameter.name] = parameter.value
             self.get_logger().info(f"Parameter '{parameter.name}' updated to: {parameter.value}")
         return rclpy.parameter.SetParametersResult(successful=True)
     
@@ -122,14 +168,19 @@ class ManipulationActionServerNode(Node):
             self.current_location = "home"
             return True
         
-    def get_pickup_point(self, bin_location):
+    def get_point_XYZ(self, location, pickup):
         coordRequest = GetXYZFromImage.Request()
-        coordRequest.bin_id = int(bin_location[-1])
-        coordRequest.timestamp = 1.0
+        coordRequest.location_id = int(location[-1])
+        coordRequest.timestamp = 1.0 # change this to current time for sync
 
-        self.future = self._get_xyz_client.call_async(coordRequest)
-        rclpy.spin_until_future_complete(self, self.future)
-        result = self.future.result()
+        if pickup:
+            self.future = self._get_pickup_xyz_client.call_async(coordRequest)
+            rclpy.spin_until_future_complete(self, self.future)
+            result = self.future.result()
+        else:
+            self.future = self._get_place_xyz_client.call_async(coordRequest)
+            rclpy.spin_until_future_complete(self, self.future)
+            result = self.future.result()
 
         if (result.x == -1):
             self.get_logger().error("Unable to Get XYZ from Vision Node")
@@ -138,6 +189,7 @@ class ManipulationActionServerNode(Node):
         self.get_logger().info(f"Result from Vision Node: {result.x}, {result.y}, {result.z}")
 
         return result
+
     
     def traj_id_to_file(self, traj_id):
         package_share_directory = get_package_share_directory('snaak_manipulation')
@@ -150,7 +202,7 @@ class ManipulationActionServerNode(Node):
         traj_file_path = os.path.join(package_share_directory, pkl_file_name)
         return traj_file_path
 
-    def execute_trajectory(self, traj_file_path):
+    def execute_trajectory(self, traj_file_path): # TODO Make trajectory following faster
         with open(traj_file_path, 'rb') as pkl_f:
             skill_data = pickle.load(pkl_f)
         
@@ -159,14 +211,15 @@ class ManipulationActionServerNode(Node):
         skill_state_dict = skill_data[0]['skill_state_dict']
 
         T = float(skill_state_dict['time_since_skill_started'][-1])
-        dt = 0.01
+        dt = 0.01 # smaller = faster
 
         joints_traj = skill_state_dict['q']
 
         self.fa.wait_for_skill()
         # go to initial pose if needed, this is more a safety feature, should not be relied on
         self.fa.goto_joints(joints_traj[0])
-        self.fa.goto_joints(joints_traj[1], duration=T, dynamic=True, buffer_time=1)
+        self.fa.goto_joints(joints_traj[1], duration=T, dynamic=True, buffer_time=10) # the arm stopped moving before reaching final location, so made this large for now
+        # wait for skill?
         init_time = self.fa.get_time()
         success = True
         for i in range(2, len(joints_traj)):
@@ -238,6 +291,141 @@ class ManipulationActionServerNode(Node):
             raise e
         finally:
             return result
+        
+    def pickup_traj(self, x, y, start_z, end_z, step_size=0.001, acceleration = 0.1):
+        '''
+        Generates a trajectory from the current x, y, start_z, to x, y, end_z 
+        using a trapazoidal velocity profile.
+
+        Inputs:
+            x: desired x position
+            y: desired y position
+            end_z: desired end z position in franka base link frame
+            step_size: maximum z displacement that occur in one time step (0.01 s)
+            acceleration: maximum allowable acceleration
+        
+        Outputs:
+            success: whether succesfully executed calculated trajectory
+        '''
+
+        if abs(start_z - end_z) < step_size:
+            return
+        
+        default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
+
+        total_distance = abs(end_z - start_z)
+        direction = 1 if end_z > start_z else -1
+
+        dt = 0.01
+        max_velocity = step_size / dt
+
+        t_accel = max_velocity / acceleration # time for robot to get up to speed
+        d_accel = 0.5 * acceleration * t_accel**2 # distance to get up to max speed or return from max speed to 0
+        t_const = 0
+        if 2 * d_accel < total_distance:
+            # Full trapezoidal profile
+            d_const = total_distance - 2 * d_accel # distance of constant speed
+            t_const = d_const / max_velocity # time in constant speed
+            t_total = 2 * t_accel + t_const
+        else:
+            # Triangular profile (not enough distance for max velocity)
+            # under constanst accel: distance = 1/2*a*t^2 (each acceleration phase is 1/2 of distance)
+            t_accel = np.sqrt(total_distance / acceleration) 
+            t_total = 2 * t_accel
+            max_velocity = acceleration * t_accel  # Adjusted max velocity
+
+        t = np.arange(0, t_total + dt, dt)
+
+        v = np.piecewise(t,
+                        [t < t_accel,
+                        (t >= t_accel) & (t < t_accel + t_const),
+                        t >= t_accel + t_const],
+                        [lambda t: acceleration * t,
+                        lambda _: max_velocity,
+                        lambda t: max_velocity - acceleration * (t - (t_accel + t_const))])
+
+        z_values = direction * cumtrapz(v, t, initial=0) + start_z
+        self.get_logger().info(f"length of z values = {z_values[-10:-1]} ")
+
+        # Ensure the last value is exactly end_z
+        if z_values[-1] != end_z:
+            z_values = np.append(z_values, end_z)
+
+        pose_traj = [RigidTransform(rotation=default_rotation,
+                                    translation=[x, y, z],
+                                    from_frame='franka_tool',
+                                    to_frame='world') for z in z_values]
+
+        T = len(pose_traj) * dt
+        self.follow_pose_trajectory(pose_traj, dt, T)
+
+
+
+    def follow_pose_trajectory(self, pose_traj, dt, T, at_start=True):
+        '''
+        Follow a pose trajectory based on a list of rigid transforms
+
+        CAUTION: YOU MUST BE AT START X, Y, Z TO SAFELY CALL THIS FUNCTION\n
+        If not, set at_start flag to false
+
+        Inputs:
+            pose_traj: list of rigid transforms
+            dt: time between publishing
+            T: time duration of pose trajectory
+
+        
+        '''
+        if not at_start:
+            self.fa.goto_pose(pose_traj[0], 
+                        duration=4.0, 
+                        use_impedance=False,
+                        cartesian_impedances=[2000.0, 2000.0, 600.0, 50.0, 50.0, 50.0])
+        
+
+        self.fa.goto_pose(pose_traj[1], 
+                    duration=T, 
+                    dynamic=True, 
+                    buffer_time=5, 
+                    use_impedance=False,
+                    cartesian_impedances=[2000.0, 2000.0, 600.0, 50.0, 50.0, 50.0]
+        )
+        success = True
+        init_time = self.fa.get_time()
+        for i in range(2, len(pose_traj)):
+            timestamp = self.fa.get_time() - init_time
+            pose_tf = pose_traj[i]
+            traj_gen_proto_msg = PosePositionSensorMessage(
+                id=i, 
+                timestamp=timestamp,
+                position=pose_tf.translation, 
+                quaternion=pose_tf.quaternion
+            )
+            ros_msg = make_sensor_group_msg(
+                trajectory_generator_sensor_msg=sensor_proto2ros_msg(
+                    traj_gen_proto_msg, 
+                    SensorDataMessageType.POSE_POSITION),
+                )
+            if (self.fa.is_joints_in_collision_with_boxes(boxes=KIOSK_COLLISION_BOXES)):
+                success = False
+                self.get_logger().error(f"In collision with boxes, stopping...")
+                break
+
+            self.fa.publish_sensor_data(ros_msg)
+            time.sleep(dt)
+
+        # Stop the skill
+        # Alternatively can call fa.stop_skill()
+        term_proto_msg = ShouldTerminateSensorMessage(timestamp=self.fa.get_time() - init_time, 
+                                                    should_terminate=True)
+        ros_msg = make_sensor_group_msg(
+            termination_handler_sensor_msg=sensor_proto2ros_msg(
+                term_proto_msg, SensorDataMessageType.SHOULD_TERMINATE)
+            )
+        
+        self.fa.publish_sensor_data(ros_msg)
+        self.fa.wait_for_skill()
+        if not success:
+            raise Exception("In Collision with boxes, cancelling motion")
 
     def execute_pickup(self, pickup_point):
         # first move to x, y
@@ -253,17 +441,14 @@ class ManipulationActionServerNode(Node):
         new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
         new_pose.translation = [destination_x, destination_y, self.pre_grasp_height]
         new_pose.rotation = default_rotation
-        self.fa.goto_pose(new_pose, cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, use_impedance=False, block=False) # TODO Issue when going to furthest out bin
+        self.fa.goto_pose(new_pose, cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, use_impedance=False, block=False)
         self.get_logger().info("Moving above grasp point...")
         self.wait_for_skill_with_collision_check()
 
         # move down
-        new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
-        new_pose.translation = [destination_x, destination_y, destination_z] #x, y global, depth is relative to grasp height
-        new_pose.rotation = default_rotation
-        self.fa.goto_pose(new_pose, cartesian_impedances=[3000, 3000, 300, 300, 300, 300], use_impedance=False, block=False)
         self.get_logger().info("Moving Down...")
-        self.wait_for_skill_with_collision_check()
+        curr_z = self.fa.get_pose().translation[2]
+        self.pickup_traj(destination_x, destination_y, curr_z, destination_z)
 
         enable_req = Trigger.Request()
 
@@ -271,12 +456,9 @@ class ManipulationActionServerNode(Node):
         rclpy.spin_until_future_complete(self, self.future)
         time.sleep(2)
 
-        new_pose = self.fa.get_pose()
-        new_pose.translation[2] = self.pre_grasp_height
-        new_pose.rotation = default_rotation
-        self.fa.goto_pose(new_pose, cartesian_impedances=[3000, 3000, 300, 300, 300, 300], use_impedance=False, block=False)
         self.get_logger().info("Moving up...")
-        self.wait_for_skill_with_collision_check()
+        curr_z = self.fa.get_pose().translation[2]
+        self.pickup_traj(destination_x, destination_y, curr_z, self.pre_grasp_height)
     
     def execute_pickup_callback(self, goal_handle):
         success = False
@@ -314,54 +496,139 @@ class ManipulationActionServerNode(Node):
             )
             result.end_pose = transform
 
-            return result  
+            return result 
+
+    def execute_place_callback(self, goal_handle):
+        success = False
+        result = Place.Result()
+        try:
+            destination_x = goal_handle.request.x
+            destination_y = goal_handle.request.y
+            destination_z = goal_handle.request.z
+            ingredient_type = goal_handle.request.ingredient_type
+            if ingredient_type == 1:
+                self.execute_place_sliced(self, (destination_x, destination_y, destination_z))
+                success=True
+            elif ingredient_type == 2:
+                #TODO call function for bread placement maneuver
+                success = False
+            elif ingredient_type == 3:
+                #TODO call function for shredded ingredient placement maneuver
+                success = False
+            else:
+                raise "Invalid Ingredient Type"
+        except Exception as e:
+            self.get_logger().error(f"Error Occured during place motion {e} ")
+            goal_handle.abort()
+            raise e
+        finally:
+            if success: goal_handle.succeed()
+            pose = self.fa.get_pose()
+            transform = Transform()
+            transform.translation = Vector3(
+                x=pose.translation[0],
+                y=pose.translation[1],
+                z=pose.translation[2]
+            )
+
+            rotation_matrix = pose.rotation
+            transformation_matrix = np.eye(4)
+            transformation_matrix[:3, :3] = rotation_matrix
+
+            q = tf_transformations.quaternion_from_matrix(transformation_matrix)
+            transform.rotation = Quaternion(
+                x=q[0],
+                y=q[1],
+                z=q[2],
+                w=q[3]
+            )
+            result.end_pose = transform
+        
+    def execute_place_sliced(self, place_point):
+        # from pre-place position
+        # first move to x, y, z with z 5cm higher than the obtained place point z - dont want the arm with the ingredient to press into the sandwich, dropping the ingredient from 5cm above would be better
+        # send service call to release vaccuum and wait for response
+        # move back to pre-place position
+
+        self.fa.wait_for_skill()
+        self.get_logger().info("Executing Sliced Ingredient Place maneuver...")
+        destination_x, destination_y, destination_z = place_point
+        default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
+
+        # move to x, y, (z + 0.05)
+        new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
+        new_pose.translation = [destination_x, destination_y, destination_z+0.05]
+        new_pose.rotation = default_rotation
+        self.fa.goto_pose(new_pose, cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, use_impedance=False, block=False) # TODO Issue when going to furthest out bin
+        self.get_logger().info("Moving above release point...")
+        self.wait_for_skill_with_collision_check()
+
+        disable_req = Trigger.Request()
+        self.future = self._disable_vacuum_client.call_async(disable_req)
+        rclpy.spin_until_future_complete(self, self.future)
+        time.sleep(2)
+
+        #TODO add go to pre-place position and execute collision check
+
+
         
     def execute_ingred_manipulation_callback(self, goal_handle):
         # Considering ingredient 0 is cheese, 1 is ham, and 2 is bread
         ingredient_id = goal_handle.request.ingredient_id
         bin_location = None
+        ingredient_type = goal_handle.request.ingredient_type
         self.get_logger().info(f"Manipulating {ingredient_id}...")
 
-        if (ingredient_id == 'cheese'):
-            bin_location = self.bin_id["cheese_bin_id"]
-        elif (ingredient_id == 'ham'):
-            bin_location = self.bin_id["ham_bin_id"]
-        elif (ingredient_id == 'bread'):
-            bin_location = self.bin_id["bread_bin_id"]
+        if ingredient_type == 1:
+            if (ingredient_id == 'cheese'):
+                bin_location = self.location_id["cheese_bin_id"]
+            elif (ingredient_id == 'ham'):
+                bin_location = self.location_id["ham_bin_id"]
+        elif ingredient_type == 2:
+            if (ingredient_id == 'bread'):
+                bin_location = self.location_id["bread_bin_id"]
 
         if bin_location == None:
             self.get_logger().info("Invalid Ingredient ID Given")
             goal_handle.abort()
             return ManipulateIngredient()
         
-        if not self.current_location == bin_location:
-            traj_id = TRAJECTORY_MAP[self.current_location][bin_location]
-            traj_file_path = self.traj_id_to_file(traj_id)
-            try:
-                self.execute_trajectory(traj_file_path)
-            except:
-                goal_handle.abort()
-                self.get_logger().error("Trajectory Following Failed")
-                return ManipulateIngredient.Result()
-            finally:
-                self.current_location = bin_location
-                time.sleep(2)
-        
-        pickup_point = self.get_pickup_point(bin_location)
-        if pickup_point == None:
-            self.get_logger().error("Could Not Get Pickup Point")
-            goal_handle.abort()
-            return ManipulateIngredient.Result()
+        # skip bread for now:
+        if ingredient_id != 'bread':
+            if not self.current_location == bin_location:
+                traj_id = TRAJECTORY_MAP[self.current_location][bin_location]
+                traj_file_path = self.traj_id_to_file(traj_id)
+                try:
+                    self.get_logger().info(f"Executing Trajectory from path: {traj_file_path}")
+                    self.execute_trajectory(traj_file_path)
+                except:
+                    goal_handle.abort()
+                    self.get_logger().error("Trajectory Following Failed")
+                    return ManipulateIngredient.Result()
+                finally:
+                    self.current_location = bin_location
+                    time.sleep(2)
             
-        try:
-            self.execute_pickup((pickup_point.x, pickup_point.y, pickup_point.z))
-        except:
-            self.get_logger().error("Ingredient Pick-Up Failed")
-            goal_handle.abort()
-            return ManipulateIngredient.Result()
+            self.get_logger().info(f"Currently at: {self.current_location}, getting pickup point...")
+            pickup_point = self.get_point_XYZ(bin_location, pickup=True)
+            if pickup_point == None:
+                self.get_logger().error("Could Not Get Pickup Point")
+                goal_handle.abort()
+                return ManipulateIngredient.Result()
+            
+            self.get_logger().info(f"Currently at: {self.current_location}, executing pickup...")
+            try:
+                self.execute_pickup((pickup_point.x, pickup_point.y, pickup_point.z))
+            except Exception as e:
+                goal_handle.abort()
+                self.get_logger().error(f"Pick-Up Maneuver Failed with error {e}")
+                return ManipulateIngredient.Result()
 
-        # TODO Add weighing scale service call to determine if we actually grabbed the ingredient
+            # TODO Add weighing scale service call to determine if we actually grabbed the ingredient
 
+        # end of pickup, go to assembly area
+
+        self.get_logger().info(f"Currently at: {self.current_location}, moving to pre place location...") #TODO: don't need to move to pre place position once bread has been placed, because we know the place point
         traj_id = TRAJECTORY_MAP[self.current_location]["assembly"]
         traj_file_path = self.traj_id_to_file(traj_id)
         try:
@@ -374,12 +641,37 @@ class ManipulationActionServerNode(Node):
             self.current_location = "assembly"
             time.sleep(2)
 
-        disable_req = Trigger.Request() # TODO put this into place manuever
-        self.future = self._disable_vacuum_client.call_async(disable_req)
-        rclpy.spin_until_future_complete(self, self.future)
+        self.get_logger().info(f"Currently at: {self.current_location}, executing place...")
 
-        # TODO add place manuever
-        goal_handle.succeed()
+        # place maneuver
+        try:
+            
+            if ingredient_type == 1:
+                # sliced ingredient - will always be placed on bread
+                self.execute_place_sliced((self.bread_center.x, self.bread_center.y, self.bread_center.z))
+                success=True
+            elif ingredient_type == 2:
+                #TODO call function for bread placement maneuver
+                self.get_logger().info("Placed Bread, Getting pose...")
+                self.bread_center = self.get_point_XYZ(location = self.location_id['assembly_bread_id'], pickup=False)
+                self.get_logger().info("Got bread center!")
+            elif ingredient_type == 3:
+                #TODO call function for shredded ingredient placement maneuver
+                success = False
+            else:
+                raise "Invalid Ingredient Type"
+        except Exception as e:
+            goal_handle.abort()
+            self.get_logger().error(f"Place Maneuver Failed with error {e}")
+            return ManipulateIngredient.Result()
+        finally:
+            self.current_location = "assembly"
+            time.sleep(2)
+        
+        self.get_logger().info(f"Manipulation complete, currently at: {self.current_location}")
+        
+
+        goal_handle.succeed() # use the bool from before
         self.get_logger().info("Manipulation Succesful!")
 
         return ManipulateIngredient.Result()
