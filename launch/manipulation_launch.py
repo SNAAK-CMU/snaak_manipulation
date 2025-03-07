@@ -10,6 +10,11 @@ def generate_launch_description():
 
         launch_ros.actions.Node(
             package='snaak_manipulation',
-            executable='manipulation_node.py',
+            executable='manipulation_actions_node.py',
             name='manipulation_action_server'),
+
+        launch_ros.actions.Node(
+            package='snaak_manipulation',
+            executable='manipulation_primary_node.py',
+            name='manipulation_primary_node')
     ])

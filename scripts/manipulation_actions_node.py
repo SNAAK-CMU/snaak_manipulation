@@ -16,7 +16,6 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Transform, Vector3, Quaternion
 import tf_transformations
-import sys
 
 from autolab_core import RigidTransform
 
@@ -43,7 +42,6 @@ class ManipulationActionServerNode(Node):
             'snaak_manipulation/reset_arm',
             self.execute_reset_arm_callback
         )
-        
 
         self._enable_vacuum_client = self.create_client(Trigger, 'enable_vacuum')
         while not self._enable_vacuum_client.wait_for_service(timeout_sec=1.0):
@@ -271,55 +269,65 @@ class ManipulationActionServerNode(Node):
 
         # go to initial pose if needed, this is more a safety feature, should not be relied on
         self.fa.goto_joints(joints_traj[0])
+        self.fa.goto_joints(joints_traj[-1])
+        # # To ensure skill doesn't end before completing trajectory, make the buffer time much longer than needed
+        # self.fa.goto_joints(joints_traj[1], duration=T, dynamic=True, buffer_time=10)
+        # init_time = self.fa.get_time()
+        # for i in range(2, len(joints_traj)):
+        #     traj_gen_proto_msg = JointPositionSensorMessage(
+        #         id=i, timestamp=self.fa.get_time() - init_time, 
+        #         joints=joints_traj[i]
+        #     )
+        #     self.get_logger().info(f'joint angles: {joints_traj[i]}')
 
-        self.fa.goto_joints(joints_traj[1], duration=T, dynamic=True, buffer_time=1)
-        init_time = self.fa.get_time()
-        for i in range(2, len(joints_traj)):
-            traj_gen_proto_msg = JointPositionSensorMessage(
-                id=i, timestamp=self.fa.get_time() - init_time, 
-                joints=joints_traj[i]
-            )
-            self.get_logger().info(f'joint angles: {joints_traj[i]}')
-
-            ros_msg = make_sensor_group_msg(
-                trajectory_generator_sensor_msg=sensor_proto2ros_msg(
-                    traj_gen_proto_msg, SensorDataMessageType.JOINT_POSITION)
-            )
+        #     ros_msg = make_sensor_group_msg(
+        #         trajectory_generator_sensor_msg=sensor_proto2ros_msg(
+        #             traj_gen_proto_msg, SensorDataMessageType.JOINT_POSITION)
+        #     )
             
-            #fa.log_info('Publishing: ID {}'.format(traj_gen_proto_msg.id))
-            self.fa.publish_sensor_data(ros_msg)
-            time.sleep(dt)
+        #     #fa.log_info('Publishing: ID {}'.format(traj_gen_proto_msg.id))
+        #     self.fa.publish_sensor_data(ros_msg)
+        #     time.sleep(dt)
     
-        term_proto_msg = ShouldTerminateSensorMessage(timestamp=self.fa.get_time() - init_time, should_terminate=True)
-        ros_msg = make_sensor_group_msg(
-            termination_handler_sensor_msg=sensor_proto2ros_msg(
-                term_proto_msg, SensorDataMessageType.SHOULD_TERMINATE)
-            )
-        self.fa.publish_sensor_data(ros_msg)
-        self.fa.wait_for_skill()
+        # term_proto_msg = ShouldTerminateSensorMessage(timestamp=self.fa.get_time() - init_time, should_terminate=True)
+        # ros_msg = make_sensor_group_msg(
+        #     termination_handler_sensor_msg=sensor_proto2ros_msg(
+        #         term_proto_msg, SensorDataMessageType.SHOULD_TERMINATE)
+        #     )
+        # self.fa.publish_sensor_data(ros_msg)
+        # self.fa._in_skill = False
+        # self.fa.stop_skill()
+
+    # def shutdown_action_servers_callback(self):
+    #     self.get_logger().info("Shutting down manipulation action servers...")
+
+    #     # Check if there are any ongoing goals in the action servers
+    #     for action_server in [self._traj_action_server, self._pickup_action_server, self._reset_arm_action_server]:
+    #         action_server_goal_handles = action_server._goal_handles
+    #         for goal_handle in action_server_goal_handles.values():
+    #             if goal_handle.get_status() != 3:  
+    #                 goal_handle.abort()  # Abort any active goal
+
+    #     self._traj_action_server.destroy()
+    #     self._pickup_action_server.destroy()
+    #     self._reset_arm_action_server.destroy()
+
+    #     self.get_logger().info("Action servers have been shut down.")
 
 def main(args=None):
     rclpy.init(args=args)
     manipulation_action_server = ManipulationActionServerNode()
     try:
         rclpy.spin(manipulation_action_server)
-    except KeyboardInterrupt:
-        manipulation_action_server.get_logger().info('Keyboard interrupt received, shutting down...')
+    # except KeyboardInterrupt:
+    #     manipulation_action_server.get_logger().info('Keyboard interrupt received, shutting down...')
     except Exception as e:
         manipulation_action_server.get_logger().error(f'Error occurred: {e}')
     finally:
-        manipulation_action_server.fa.stop_robot_immediately()
-        # manipulation_action_server.shutdown_action_servers_callback()
+        #manipulation_action_server.shutdown_action_servers_callback()
         manipulation_action_server.destroy_node()
         rclpy.shutdown()
 
 
 if __name__ == '__main__':
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\nStopping script gracefully...")
-        # Perform cleanup actions here, such as closing files or releasing resources
-        print("Cleanup complete.")
-        sys.exit(0) # Exit with a status code of 0, indicating success
-    
+    main()

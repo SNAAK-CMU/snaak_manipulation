@@ -199,8 +199,10 @@ class ExecuteIngredientManipulationServer(Node):
         return ManipulateIngredient.Result()
     
     def get_pickup_point(self, bin_location):
+        # TODO Replace this with vision values, these have been manually found
         coordRequest = GetXYZFromImage.Request()
         coordRequest.bin_id = int(bin_location[-1])
+        # coordRequest.timestamp = Time()
         coordRequest.timestamp = 1.0
 
         self.future = self._get_xyz_client.call_async(coordRequest)

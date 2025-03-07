@@ -25,12 +25,12 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "action/Pickup.action"
   "action/ManipulateIngredient.action"
   "action/ReturnToHome.action"
-  "action/Place.action"
   DEPENDENCIES geometry_msgs
 )
 
 install(PROGRAMS
-  scripts/manipulation_node.py
+  scripts/manipulation_actions_node.py
+  scripts/manipulation_primary_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -40,5 +40,5 @@ install(DIRECTORY
   DESTINATION share/${PROJECT_NAME}/
 )
 
-ament_python_install_package(scripts)
+
 ament_package()

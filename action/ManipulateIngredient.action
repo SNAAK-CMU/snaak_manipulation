@@ -1,6 +1,4 @@
 string ingredient_id
-
-int32 ingredient_type
 ---
 # TODO: want any result?
 ---
