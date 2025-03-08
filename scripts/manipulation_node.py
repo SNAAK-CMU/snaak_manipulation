@@ -81,14 +81,11 @@ class ManipulationActionServerNode(Node):
         
         self._disable_vacuum_client = self.create_client(Trigger, 'disable_vacuum')
         self._enable_vacuum_client = self.create_client(Trigger, 'enable_vacuum')
-        self._eject_vaccum_client = self.create_client(SetBool, 'eject_vacuum')
+        self._eject_vacuum_client = self.create_client(SetBool, 'eject_vacuum')
 
         self._get_pickup_xyz_client = self.create_client(GetXYZFromImage, 'snaak_vision/get_pickup_point')
         self._get_place_xyz_client = self.create_client(GetXYZFromImage, 'snaak_vision/get_place_point')
         self.wait_for_service_clients()
-
-        self.get_logger().info("Started Manipulation Node")
-        
 
         self.fa = FrankaArm(init_rclpy=False)
         self.pre_grasp_height = 0.3
@@ -135,7 +132,7 @@ class ManipulationActionServerNode(Node):
             ('enable_vaccuum', self._enable_vacuum_client),
             ('snaak_vision/get_pickup_point', self._get_pickup_xyz_client),
             ('snaak_vision/get_place_point', self._get_place_xyz_client),
-            ('eject_vaccum', self._eject_vaccum_client) # use this instead of disable when placing?
+            ('eject_vaccum', self._eject_vacuum_client) # use this instead of disable when placing?
         ]
         
         for client_name, client in clients:
@@ -210,10 +207,11 @@ class ManipulationActionServerNode(Node):
             "Trajectory not collected in guide mode"
         skill_state_dict = skill_data[0]['skill_state_dict']
 
-        T = float(skill_state_dict['time_since_skill_started'][-1])
-        dt = 0.01 # smaller = faster
+        #T = float(skill_state_dict['time_since_skill_started'][-1])
+        dt = 0.001 # smaller = faster
 
         joints_traj = skill_state_dict['q']
+        T = len(joints_traj) * dt
 
         self.fa.wait_for_skill()
         # go to initial pose if needed, this is more a safety feature, should not be relied on
@@ -292,7 +290,7 @@ class ManipulationActionServerNode(Node):
         finally:
             return result
         
-    def pickup_traj(self, x, y, start_z, end_z, step_size=0.001, acceleration = 0.1):
+    def pickup_traj(self, x, y, start_z, end_z, step_size=0.001, acceleration = 0.2):
         '''
         Generates a trajectory from the current x, y, start_z, to x, y, end_z 
         using a trapazoidal velocity profile.
@@ -563,10 +561,14 @@ class ManipulationActionServerNode(Node):
         self.get_logger().info("Moving above release point...")
         self.wait_for_skill_with_collision_check()
 
+        eject_req = SetBool.Request()
+        eject_req.data = True
+        self.future = self._eject_vacuum_client.call_async(eject_req)
+        rclpy.spin_until_future_complete(self, self.future)
+
         disable_req = Trigger.Request()
         self.future = self._disable_vacuum_client.call_async(disable_req)
         rclpy.spin_until_future_complete(self, self.future)
-        time.sleep(2)
 
         #TODO add go to pre-place position and execute collision check
 
@@ -591,7 +593,7 @@ class ManipulationActionServerNode(Node):
         if bin_location == None:
             self.get_logger().info("Invalid Ingredient ID Given")
             goal_handle.abort()
-            return ManipulateIngredient()
+            return ManipulateIngredient().Result()
         
         # skip bread for now:
         if ingredient_id != 'bread':
