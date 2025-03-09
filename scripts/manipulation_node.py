@@ -19,6 +19,7 @@ import tf_transformations
 from autolab_core import RigidTransform
 from example_interfaces.srv import SetBool
 from scipy.integrate import cumtrapz
+import asyncio
 
 import sys
 
@@ -78,7 +79,7 @@ class ManipulationActionServerNode(Node):
             'snaak_manipulation/return_home',
             self.execute_rth_callback
         )
-        
+
         self._disable_vacuum_client = self.create_client(Trigger, 'disable_vacuum')
         self._enable_vacuum_client = self.create_client(Trigger, 'enable_vacuum')
         self._eject_vacuum_client = self.create_client(SetBool, 'eject_vacuum')
@@ -89,7 +90,7 @@ class ManipulationActionServerNode(Node):
 
         self.fa = FrankaArm(init_rclpy=False)
         self.pre_grasp_height = 0.3
-
+        self.collision_detected = False
         # TODO put constants in a different location
         self.current_location = 'home'
 
@@ -99,30 +100,30 @@ class ManipulationActionServerNode(Node):
             rclpy.shutdown()
         
         # Go to pre place position to localize tray
-        try:
-            # go to pre place position
-            self.get_logger().info("Moving to assembly area...")
-            home2assembly_fp = self.traj_id_to_file(4)
-            self.execute_trajectory(home2assembly_fp)
-            self.current_location = 'assembly'
-            self.get_logger().info(f"Maneuver complete, current location: {self.current_location}")
+        # try:
+        #     # go to pre place position
+        #     self.get_logger().info("Moving to assembly area...")
+        #     home2assembly_fp = self.traj_id_to_file(4)
+        #     self.execute_trajectory(home2assembly_fp)
+        #     self.current_location = 'assembly'
+        #     self.get_logger().info(f"Maneuver complete, current location: {self.current_location}")
 
-            # call tray localization service
-            tray_center = self.get_point_XYZ(location=self.location_id['assembly_tray_id'], pickup=False)
-            self.get_logger().info(f"Got Tray Center: {tray_center.x}, {tray_center.y}, {tray_center.z}!")
-            # use this when placing the first bread slice
+        #     # call tray localization service
+        #     tray_center = self.get_point_XYZ(location=self.location_id['assembly_tray_id'], pickup=False)
+        #     self.get_logger().info(f"Got Tray Center: {tray_center.x}, {tray_center.y}, {tray_center.z}!")
+        #     # use this when placing the first bread slice
 
-            # go back home
-            self.get_logger().info("Going back to home...")
-            reset_success = self.reset_arm()
-            if not reset_success:
-                self.get_logger().info('Reset Arm Failed')
-                rclpy.shutdown()
-            self.get_logger().info(f"Arm Reset complete, current location: {self.current_location}")
+        #     # go back home
+        #     self.get_logger().info("Going back to home...")
+        #     reset_success = self.reset_arm()
+        #     if not reset_success:
+        #         self.get_logger().info('Reset Arm Failed')
+        #         rclpy.shutdown()
+        #     self.get_logger().info(f"Arm Reset complete, current location: {self.current_location}")
             
-        except Exception as e:
-            self.get_logger().error(f"Error Occured While Getting Tray Center")
-            raise e    
+        # except Exception as e:
+        #     self.get_logger().error(f"Error Occured While Getting Tray Center")
+        #     raise e    
         
         self.bread_center = None
 
@@ -130,8 +131,8 @@ class ManipulationActionServerNode(Node):
         clients = [
             ('disable_vaccuum', self._disable_vacuum_client),
             ('enable_vaccuum', self._enable_vacuum_client),
-            ('snaak_vision/get_pickup_point', self._get_pickup_xyz_client),
-            ('snaak_vision/get_place_point', self._get_place_xyz_client),
+            #('snaak_vision/get_pickup_point', self._get_pickup_xyz_client),
+            #('snaak_vision/get_place_point', self._get_place_xyz_client),
             ('eject_vaccum', self._eject_vacuum_client) # use this instead of disable when placing?
         ]
         
@@ -208,18 +209,18 @@ class ManipulationActionServerNode(Node):
         skill_state_dict = skill_data[0]['skill_state_dict']
 
         #T = float(skill_state_dict['time_since_skill_started'][-1])
-        dt = 0.001 # smaller = faster
+        dt = 0.01 # smaller = faster
 
         joints_traj = skill_state_dict['q']
         T = len(joints_traj) * dt
 
         self.fa.wait_for_skill()
         # go to initial pose if needed, this is more a safety feature, should not be relied on
-        self.fa.goto_joints(joints_traj[0])
-        self.fa.goto_joints(joints_traj[1], duration=T, dynamic=True, buffer_time=10) # the arm stopped moving before reaching final location, so made this large for now
+        self.fa.goto_joints(joints_traj[0], use_impedance=False, block=False)
+        self.wait_for_skill_with_collision_check()
+        self.fa.goto_joints(joints_traj[1], duration=T, dynamic=True, buffer_time=1) # the arm stopped moving before reaching final location, so made this large for now
         # wait for skill?
         init_time = self.fa.get_time()
-        success = True
         for i in range(2, len(joints_traj)):
             traj_gen_proto_msg = JointPositionSensorMessage(
                 id=i, timestamp=self.fa.get_time() - init_time, 
@@ -231,9 +232,6 @@ class ManipulationActionServerNode(Node):
                     traj_gen_proto_msg, SensorDataMessageType.JOINT_POSITION)
             )
 
-            if (self.fa.is_joints_in_collision_with_boxes(boxes=KIOSK_COLLISION_BOXES)):
-                success = False
-                break
             
             self.fa.publish_sensor_data(ros_msg)
             time.sleep(dt)
@@ -245,9 +243,6 @@ class ManipulationActionServerNode(Node):
             )
         self.fa.publish_sensor_data(ros_msg)
         self.fa.wait_for_skill()
-
-        if not success:
-            raise Exception("In Collision with boxes, cancelling motion")
 
 
     def execute_trajectory_callback(self, goal_handle):
@@ -290,7 +285,7 @@ class ManipulationActionServerNode(Node):
         finally:
             return result
         
-    def pickup_traj(self, x, y, start_z, end_z, step_size=0.001, acceleration = 0.2):
+    def pickup_traj(self, x, y, start_z, end_z, step_size=0.001, acceleration = 0.1):
         '''
         Generates a trajectory from the current x, y, start_z, to x, y, end_z 
         using a trapazoidal velocity profile.
@@ -357,7 +352,14 @@ class ManipulationActionServerNode(Node):
         T = len(pose_traj) * dt
         self.follow_pose_trajectory(pose_traj, dt, T)
 
-
+    async def async_collision_check(self, boxes, dt):
+            """Asynchronous collision check"""
+            while not self.collision_detected:
+                if self.fa.is_joints_in_collision_with_boxes(boxes=boxes):
+                    self.get_logger().error(f"In collision with boxes, stopping...")
+                    self.collision_detected = True
+                    return
+                await asyncio.sleep(dt)
 
     def follow_pose_trajectory(self, pose_traj, dt, T, at_start=True):
         '''
@@ -377,17 +379,23 @@ class ManipulationActionServerNode(Node):
             self.fa.goto_pose(pose_traj[0], 
                         duration=4.0, 
                         use_impedance=False,
+                        block=False,
                         cartesian_impedances=[2000.0, 2000.0, 600.0, 50.0, 50.0, 50.0])
-        
+            self.wait_for_skill_with_collision_check()
 
         self.fa.goto_pose(pose_traj[1], 
                     duration=T, 
                     dynamic=True, 
-                    buffer_time=5, 
+                    buffer_time=1, 
                     use_impedance=False,
                     cartesian_impedances=[2000.0, 2000.0, 600.0, 50.0, 50.0, 50.0]
         )
-        success = True
+        self.collision_detected = False
+
+        # execute collision in sseperate thread
+        collision_task = asyncio.run_coroutine_threadsafe(
+            self.async_collision_check(KIOSK_COLLISION_BOXES, dt), asyncio.get_event_loop()
+        )        
         init_time = self.fa.get_time()
         for i in range(2, len(pose_traj)):
             timestamp = self.fa.get_time() - init_time
@@ -403,11 +411,8 @@ class ManipulationActionServerNode(Node):
                     traj_gen_proto_msg, 
                     SensorDataMessageType.POSE_POSITION),
                 )
-            if (self.fa.is_joints_in_collision_with_boxes(boxes=KIOSK_COLLISION_BOXES)):
-                success = False
-                self.get_logger().error(f"In collision with boxes, stopping...")
+            if self.collision_detected:
                 break
-
             self.fa.publish_sensor_data(ros_msg)
             time.sleep(dt)
 
@@ -422,7 +427,9 @@ class ManipulationActionServerNode(Node):
         
         self.fa.publish_sensor_data(ros_msg)
         self.fa.wait_for_skill()
-        if not success:
+        collision_task.cancel()
+        if self.collision_detected:
+            self.collision_detected = False
             raise Exception("In Collision with boxes, cancelling motion")
 
     def execute_pickup(self, pickup_point):
@@ -465,7 +472,7 @@ class ManipulationActionServerNode(Node):
             destination_x = goal_handle.request.x
             destination_y = goal_handle.request.y
             destination_z = goal_handle.request.z
-            self.execute_pickup(self, (destination_x, destination_y, destination_z))
+            self.execute_pickup((destination_x, destination_y, destination_z))
             success=True
         except Exception as e:
             self.get_logger().error(f"Error Occured during pickup motion {e} ")
