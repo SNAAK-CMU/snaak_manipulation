@@ -100,30 +100,30 @@ class ManipulationActionServerNode(Node):
             rclpy.shutdown()
         
         # Go to pre place position to localize tray
-        # try:
-        #     # go to pre place position
-        #     self.get_logger().info("Moving to assembly area...")
-        #     home2assembly_fp = self.traj_id_to_file(4)
-        #     self.execute_trajectory(home2assembly_fp)
-        #     self.current_location = 'assembly'
-        #     self.get_logger().info(f"Maneuver complete, current location: {self.current_location}")
+        try:
+            # go to pre place position
+            self.get_logger().info("Moving to assembly area...")
+            home2assembly_fp = self.traj_id_to_file(4)
+            self.execute_trajectory(home2assembly_fp)
+            self.current_location = 'assembly'
+            self.get_logger().info(f"Maneuver complete, current location: {self.current_location}")
 
-        #     # call tray localization service
-        #     tray_center = self.get_point_XYZ(location=self.location_id['assembly_tray_id'], pickup=False)
-        #     self.get_logger().info(f"Got Tray Center: {tray_center.x}, {tray_center.y}, {tray_center.z}!")
-        #     # use this when placing the first bread slice
+            # call tray localization service
+            tray_center = self.get_point_XYZ(location=self.location_id['assembly_tray_id'], pickup=False)
+            self.get_logger().info(f"Got Tray Center: {tray_center.x}, {tray_center.y}, {tray_center.z}!")
+            # use this when placing the first bread slice
 
-        #     # go back home
-        #     self.get_logger().info("Going back to home...")
-        #     reset_success = self.reset_arm()
-        #     if not reset_success:
-        #         self.get_logger().info('Reset Arm Failed')
-        #         rclpy.shutdown()
-        #     self.get_logger().info(f"Arm Reset complete, current location: {self.current_location}")
+            # go back home
+            self.get_logger().info("Going back to home...")
+            reset_success = self.reset_arm()
+            if not reset_success:
+                self.get_logger().info('Reset Arm Failed')
+                rclpy.shutdown()
+            self.get_logger().info(f"Arm Reset complete, current location: {self.current_location}")
             
-        # except Exception as e:
-        #     self.get_logger().error(f"Error Occured While Getting Tray Center")
-        #     raise e    
+        except Exception as e:
+            self.get_logger().error(f"Error Occured While Getting Tray Center")
+            raise e    
         
         self.bread_center = None
 
@@ -131,8 +131,8 @@ class ManipulationActionServerNode(Node):
         clients = [
             ('disable_vaccuum', self._disable_vacuum_client),
             ('enable_vaccuum', self._enable_vacuum_client),
-            #('snaak_vision/get_pickup_point', self._get_pickup_xyz_client),
-            #('snaak_vision/get_place_point', self._get_place_xyz_client),
+            ('snaak_vision/get_pickup_point', self._get_pickup_xyz_client),
+            ('snaak_vision/get_place_point', self._get_place_xyz_client),
             ('eject_vaccum', self._eject_vacuum_client) # use this instead of disable when placing?
         ]
         
