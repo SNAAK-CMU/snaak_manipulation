@@ -1,4 +1,4 @@
-int32 traj_id
+string desired_location
 ---
 geometry_msgs/Transform end_pose
 ---

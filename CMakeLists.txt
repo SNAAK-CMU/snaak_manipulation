@@ -23,14 +23,13 @@ find_package(action_msgs REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "action/FollowTrajectory.action"
   "action/Pickup.action"
-  "action/ManipulateIngredient.action"
   "action/ReturnToHome.action"
   "action/Place.action"
   DEPENDENCIES geometry_msgs
 )
 
 install(PROGRAMS
-  scripts/manipulation_node.py
+  scripts/snaak_manipulation_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
