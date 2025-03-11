@@ -1,4 +1,4 @@
-string desired_location
+String desired_location
 ---
 geometry_msgs/Transform end_pose
 ---

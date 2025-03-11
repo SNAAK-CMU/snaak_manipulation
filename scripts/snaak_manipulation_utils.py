@@ -4,7 +4,7 @@ from autolab_core import RigidTransform
 from scripts.snaak_manipulation_constants import TRAJECTORY_FILE_MAP, TRAJECTORY_ID_MAP
 import os
 
-def pickup_traj(self, x, y, start_z, end_z, step_size=0.001, acceleration = 0.1):
+def pickup_traj(x, y, start_z, end_z, step_size=0.001, acceleration = 0.1):
     '''
     Generates a trajectory from the current x, y, start_z, to x, y, end_z 
     using a trapazoidal velocity profile.
@@ -74,7 +74,7 @@ def pickup_traj(self, x, y, start_z, end_z, step_size=0.001, acceleration = 0.1)
     return pose_traj, dt, T
 
 
-def get_traj_file(self, package_share_directory, curr_location, end_location):
+def get_traj_file(package_share_directory, curr_location, end_location):
     '''
     Returns the trajectory pkl file based on the current and desired end location
 
