@@ -8,20 +8,19 @@ from frankapy.proto import JointPositionSensorMessage, ShouldTerminateSensorMess
 import rclpy
 from rclpy.action import ActionServer
 from rclpy.node import Node
-from snaak_manipulation.action import FollowTrajectory, Pickup, ReturnToHome, ManipulateIngredient, Place
+from snaak_manipulation.action import FollowTrajectory, Pickup, ReturnToHome, Place
 
 from std_srvs.srv import Trigger
-import os
 from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Transform, Vector3, Quaternion
 import tf_transformations
 from autolab_core import RigidTransform
 from example_interfaces.srv import SetBool
 import asyncio
-from scripts.snaak_manipulation_utils import pickup_traj
+from scripts.snaak_manipulation_utils import pickup_traj, get_traj_file
 import sys
 
-from scripts.snaak_manipulation_constants import KIOSK_COLLISION_BOXES, TRAJECTORY_MAP
+from scripts.snaak_manipulation_constants import KIOSK_COLLISION_BOXES, TRAJECTORY_ID_MAP
 
 class ManipulationActionServerNode(Node):
     def __init__(self):
@@ -46,7 +45,7 @@ class ManipulationActionServerNode(Node):
         self._traj_action_server = ActionServer(
             self,
             FollowTrajectory,
-            'snaak_manipulation/follow_trajectory',
+            'snaak_manipulation/execute_trajectory',
             self.execute_trajectory_callback
         )
 
@@ -119,7 +118,7 @@ class ManipulationActionServerNode(Node):
                 return
             await asyncio.sleep(dt)
 
-    def execute_trajectory(self, traj_file_path):
+    def execute_joint_trajectory(self, traj_file_path):
         with open(traj_file_path, 'rb') as pkl_f:
             skill_data = pickle.load(pkl_f)
         
@@ -177,7 +176,7 @@ class ManipulationActionServerNode(Node):
     def execute_trajectory_callback(self, goal_handle):
         share_directory = get_package_share_directory('snaak_manipulation')
         desired_end_location = goal_handle.request.desired_location
-        traj_file_path = self.get_traj_file(share_directory, self.current_location, desired_end_location)
+        traj_file_path = get_traj_file(share_directory, self.current_location, desired_end_location)
         result = FollowTrajectory.Result()
         
         success = False
@@ -188,7 +187,7 @@ class ManipulationActionServerNode(Node):
         
         try:
             self.get_logger().info('Executing Trajectory...')
-            self.execute_trajectory(traj_file_path)
+            self.execute_joint_trajectory(traj_file_path)
             self.current_location = desired_end_location
             success = True
         except Exception as e:
@@ -221,7 +220,7 @@ class ManipulationActionServerNode(Node):
             return result
         
 
-    def follow_pose_trajectory(self, pose_traj, dt, T, at_start=True):
+    def execute_pose_trajectory(self, pose_traj, dt, T, at_start=True):
         '''
         Follow a pose trajectory based on a list of rigid transforms
 
@@ -303,6 +302,7 @@ class ManipulationActionServerNode(Node):
         '''
         self.fa.wait_for_skill() 
         destination_x, destination_y, destination_z = pickup_point
+        # TODO put z offset here?
         default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
         
         # move to x, y, and z directly above the bin
@@ -317,7 +317,7 @@ class ManipulationActionServerNode(Node):
         self.get_logger().info("Moving Down...")
         curr_z = self.fa.get_pose().translation[2]
         pose_traj, dt, T = pickup_traj(destination_x, destination_y, curr_z, destination_z)
-        self.follow_pose_trajectory(pose_traj, dt, T)
+        self.execute_pose_trajectory(pose_traj, dt, T)
         enable_req = Trigger.Request()
 
         self.future = self._enable_vacuum_client.call_async(enable_req)
@@ -328,7 +328,7 @@ class ManipulationActionServerNode(Node):
         self.get_logger().info("Moving up...")
         curr_z = self.fa.get_pose().translation[2]
         pose_traj, dt, T = pickup_traj(destination_x, destination_y, curr_z, self.pre_grasp_height)
-        self.follow_pose_trajectory(pose_traj, dt, T)
+        self.execute_pose_trajectory(pose_traj, dt, T)
 
     def execute_pickup_callback(self, goal_handle):
         success = False
@@ -466,11 +466,11 @@ class ManipulationActionServerNode(Node):
         if self.current_location == 'home':
             success = self.reset_arm()
         else:
-            traj_id = TRAJECTORY_MAP[self.current_location]['home']
+            traj_id = TRAJECTORY_ID_MAP[self.current_location]['home']
             traj_file_path = self.traj_id_to_file(traj_id)
 
             try:
-                self.execute_trajectory(traj_file_path)
+                self.execute_joint_trajectory(traj_file_path)
             except:
                 success = False
 

@@ -1,7 +1,8 @@
 import numpy as np
 from scipy.integrate import cumtrapz
 from autolab_core import RigidTransform
-from scripts.snaak_manipulation_constants import TRAJECTORY_FILE_MAP, TRAJECTORY_MAP
+from scripts.snaak_manipulation_constants import TRAJECTORY_FILE_MAP, TRAJECTORY_ID_MAP
+import os
 
 def pickup_traj(self, x, y, start_z, end_z, step_size=0.001, acceleration = 0.1):
     '''
@@ -86,7 +87,7 @@ def get_traj_file(self, package_share_directory, curr_location, end_location):
         traj_file_path: complete file path to .pkl file
     '''
     pkl_file_name = None
-    traj_id = TRAJECTORY_MAP[curr_location][end_location]
+    traj_id = TRAJECTORY_ID_MAP[curr_location][end_location]
     if traj_id in TRAJECTORY_FILE_MAP:
         pkl_file_name = TRAJECTORY_FILE_MAP[traj_id]
     else:
