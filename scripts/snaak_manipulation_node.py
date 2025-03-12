@@ -8,7 +8,7 @@ from frankapy.proto import JointPositionSensorMessage, ShouldTerminateSensorMess
 import rclpy
 from rclpy.action import ActionServer
 from rclpy.node import Node
-from snaak_manipulation.action import FollowTrajectory, Pickup, ReturnToHome, Place
+from snaak_manipulation.action import ExecuteTrajectory, Pickup, ReturnHome, Place
 
 from std_srvs.srv import Trigger
 from ament_index_python.packages import get_package_share_directory
@@ -44,7 +44,7 @@ class ManipulationActionServerNode(Node):
 
         self._traj_action_server = ActionServer(
             self,
-            FollowTrajectory,
+            ExecuteTrajectory,
             'snaak_manipulation/execute_trajectory',
             self.execute_trajectory_callback
         )
@@ -65,7 +65,7 @@ class ManipulationActionServerNode(Node):
 
         self._rth_action_server = ActionServer(
             self,
-            ReturnToHome,
+            ReturnHome,
             'snaak_manipulation/return_home',
             self.execute_rth_callback
         )
@@ -108,6 +108,7 @@ class ManipulationActionServerNode(Node):
                 self.fa.stop_skill()
                 self.fa.wait_for_skill()
                 raise Exception("In Collision with boxes, cancelling motion")
+            time.sleep(0.01)
         
     async def async_collision_check(self, boxes, dt):
         """Asynchronous collision check"""
@@ -177,7 +178,7 @@ class ManipulationActionServerNode(Node):
         share_directory = get_package_share_directory('snaak_manipulation')
         desired_end_location = goal_handle.request.desired_location
         traj_file_path = get_traj_file(share_directory, self.current_location, desired_end_location)
-        result = FollowTrajectory.Result()
+        result = ExecuteTrajectory.Result()
         
         success = False
         if traj_file_path is None:
@@ -379,7 +380,7 @@ class ManipulationActionServerNode(Node):
             destination_z = goal_handle.request.z
             ingredient_type = goal_handle.request.ingredient_type
             if ingredient_type == 1:
-                self.execute_place_sliced(self, (destination_x, destination_y, destination_z))
+                self.execute_place_sliced((destination_x, destination_y, destination_z))
                 success=True
             elif ingredient_type == 2:
                 #TODO call function for bread placement maneuver
@@ -415,6 +416,7 @@ class ManipulationActionServerNode(Node):
                 w=q[3]
             )
             result.end_pose = transform
+            return result
         
     def execute_place_sliced(self, place_point):
         '''
@@ -477,11 +479,11 @@ class ManipulationActionServerNode(Node):
         if (not success):
             goal_handle.abort()
             self.get_logger().error("Return To Home Failed")
-            return ReturnToHome.Result()
+            return ReturnHome.Result()
         else:
             self.current_location = 'home'
             goal_handle.succeed()
-            return ReturnToHome.Result()
+            return ReturnHome.Result()
         
 def main(args=None):
     # TODO add proper shutdown with FrankaPy

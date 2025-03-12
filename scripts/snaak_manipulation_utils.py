@@ -59,7 +59,6 @@ def pickup_traj(x, y, start_z, end_z, step_size=0.001, acceleration = 0.1):
                     lambda t: max_velocity - acceleration * (t - (t_accel + t_const))])
 
     z_values = direction * cumtrapz(v, t, initial=0) + start_z
-    self.get_logger().info(f"length of z values = {z_values[-10:-1]} ")
 
     # Ensure the last value is exactly end_z
     if z_values[-1] != end_z:
