@@ -177,20 +177,23 @@ class ManipulationActionServerNode(Node):
     def execute_trajectory_callback(self, goal_handle):
         share_directory = get_package_share_directory('snaak_manipulation')
         desired_end_location = goal_handle.request.desired_location
-        traj_file_path = get_traj_file(share_directory, self.current_location, desired_end_location)
-        result = ExecuteTrajectory.Result()
-        
-        success = False
-        if traj_file_path is None:
-            self.get_logger().error("Invalid Trajectory")
-            goal_handle.abort()
-            return result
-        
         try:
-            self.get_logger().info('Executing Trajectory...')
-            self.execute_joint_trajectory(traj_file_path)
-            self.current_location = desired_end_location
-            success = True
+            if self.current_location != desired_end_location:
+                traj_file_path = get_traj_file(share_directory, self.current_location, desired_end_location)
+                result = ExecuteTrajectory.Result()
+                
+                success = False
+                if traj_file_path is None:
+                    self.get_logger().error("Invalid Trajectory")
+                    goal_handle.abort()
+                    return result
+                self.get_logger().info('Executing Trajectory...')
+                self.execute_joint_trajectory(traj_file_path)
+                self.current_location = desired_end_location
+                success = True
+            else:
+                self.get_logger().info("Already at desired location")
+                success = True
         except Exception as e:
             self.get_logger().error(f"Error Occured during trajectory following {e} ")
             goal_handle.abort()
