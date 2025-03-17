@@ -471,8 +471,8 @@ class ManipulationActionServerNode(Node):
         if self.current_location == 'home':
             success = self.reset_arm()
         else:
-            traj_id = TRAJECTORY_ID_MAP[self.current_location]['home']
-            traj_file_path = self.traj_id_to_file(traj_id)
+            share_directory = get_package_share_directory('snaak_manipulation')
+            traj_file_path = get_traj_file(share_directory, self.current_location, 'home')
 
             try:
                 self.execute_joint_trajectory(traj_file_path)
