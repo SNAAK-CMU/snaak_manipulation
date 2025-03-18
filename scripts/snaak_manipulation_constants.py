@@ -18,7 +18,7 @@ TRAJECTORY_FILE_MAP = {
     14: 'assembly2bin3_verified.pkl'
 }
 
-TRAJECTORY_MAP = {
+TRAJECTORY_ID_MAP = {
     'home': {'bin1': 1, 'bin2': 2, 'bin3': 3, 'assembly': 4},
     'bin1': {'home': 5, 'assembly': 6},
     'bin2': {'home': 7, 'assembly': 8},

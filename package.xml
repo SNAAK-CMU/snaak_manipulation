@@ -3,7 +3,7 @@
 <package format="3">
   <name>snaak_manipulation</name>
   <version>0.0.1</version>
-  <description>Manipulation For CMU MRSD Team C25</description>
+  <description>Manipulation ROS Node For CMU MRSD Team C25</description>
   <maintainer email="bertonoliver50@gmail.com">oberton</maintainer>
   <license>TODO: License declaration</license>
 
@@ -17,10 +17,7 @@
   <depend>tf2_ros</depend>
   <depend>action_msgs</depend>
   <depend>ament_index_python</depend>
-  <depend>weight_service</depend>
-  <depend>snaak_pneumatic</depend>
-  <depend>snaak_vision</depend>
-
+  <exec_depend>snaak_pneumatic</exec_depend>
   
   <buildtool_depend>rosidl_default_generators</buildtool_depend>
   <exec_depend>rosidl_default_runtime</exec_depend>
