@@ -70,9 +70,9 @@ class ManipulationActionServerNode(Node):
             self.execute_rth_callback
         )
 
-        self._disable_vacuum_client = self.create_client(Trigger, 'disable_vacuum')
-        self._enable_vacuum_client = self.create_client(Trigger, 'enable_vacuum')
-        self._eject_vacuum_client = self.create_client(SetBool, 'eject_vacuum')
+        self._disable_vacuum_client = self.create_client(Trigger, '/snaak_pneumatic/disable_vacuum')
+        self._enable_vacuum_client = self.create_client(Trigger, '/snaak_pneumatic/enable_vacuum')
+        self._eject_vacuum_client = self.create_client(SetBool, '/snaak_pneumatic/eject_vacuum')
 
         self.wait_for_service_clients()
 
