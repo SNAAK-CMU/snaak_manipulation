@@ -444,15 +444,16 @@ class ManipulationActionServerNode(Node):
         self.fa.goto_pose(new_pose, cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, use_impedance=False, block=False) # TODO Issue when going to furthest out bin
         self.get_logger().info("Moving above release point...")
         self.wait_for_skill_with_collision_check()
+        
+        # disable vacuum
+        disable_req = Trigger.Request()
+        self.future = self._disable_vacuum_client.call_async(disable_req)
+        rclpy.spin_until_future_complete(self, self.future)
 
         # release ingredient
         eject_req = SetBool.Request()
         eject_req.data = True
         self.future = self._eject_vacuum_client.call_async(eject_req)
-        rclpy.spin_until_future_complete(self, self.future)
-
-        disable_req = Trigger.Request()
-        self.future = self._disable_vacuum_client.call_async(disable_req)
         rclpy.spin_until_future_complete(self, self.future)
 
         #TODO add go to pre-place position and execute collision check
