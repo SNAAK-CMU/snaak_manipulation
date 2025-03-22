@@ -109,7 +109,14 @@ class ManipulationActionServerNode(Node):
                 self.fa.wait_for_skill()
                 raise Exception("In Collision with boxes, cancelling motion")
             time.sleep(0.01)
-        
+        #self.validate_execution(desired_pose)
+            
+    def validate_execution(self, desired_pose):
+        curr_translation = self.fa.get_pose().translation
+        desired_translation = self.fa.get_pose().translation
+        if np.linalg.norm(desired_translation - curr_translation) > 0.15:
+            raise Exception("Did not reach desired position")
+            
     async def async_collision_check(self, boxes, dt):
         """Asynchronous collision check"""
         while not self.collision_detected:
@@ -493,7 +500,7 @@ class ManipulationActionServerNode(Node):
             self.current_location = 'home'
             goal_handle.succeed()
             return ReturnHome.Result()
-        
+            
 def main(args=None):
     # TODO add proper shutdown with FrankaPy
     rclpy.init(args=args)
