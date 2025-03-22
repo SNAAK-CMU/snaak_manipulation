@@ -433,6 +433,7 @@ class ManipulationActionServerNode(Node):
         '''
 
         self.fa.wait_for_skill()
+        check_pose = self.fa.get_pose()
         self.get_logger().info("Executing Sliced Ingredient Place maneuver...")
         destination_x, destination_y, destination_z = place_point
         default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
@@ -441,7 +442,7 @@ class ManipulationActionServerNode(Node):
         new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
         new_pose.translation = [destination_x, destination_y, destination_z+0.05]
         new_pose.rotation = default_rotation
-        self.fa.goto_pose(new_pose, cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, use_impedance=False, block=False) # TODO Issue when going to furthest out bin
+        self.fa.goto_pose(new_pose, cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, use_impedance=False, block=False) # TODO Change impedances?
         self.get_logger().info("Moving above release point...")
         self.wait_for_skill_with_collision_check()
         
@@ -457,7 +458,11 @@ class ManipulationActionServerNode(Node):
         rclpy.spin_until_future_complete(self, self.future)
 
         #TODO add go to pre-place position and execute collision check
-    
+        self.get_logger().info("Moving back to check position...")
+        self.fa.goto_pose(check_pose, cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, use_impedance=False, block=False)
+        self.wait_for_skill_with_collision_check()
+
+
     def reset_arm(self):
         try:
             self.fa.reset_joints()
