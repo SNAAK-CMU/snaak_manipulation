@@ -78,6 +78,8 @@ class ManipulationActionServerNode(Node):
 
         self.fa = FrankaArm(init_rclpy=False)
         self.pre_grasp_height = 0.3
+        self.pickup_place_impedances = [2000.0, 2000.0, 600.0, 50.0, 50.0, 50.0]
+
         self.collision_detected = False
         self.current_location = 'home'
 
@@ -111,11 +113,17 @@ class ManipulationActionServerNode(Node):
             time.sleep(0.01)
         #self.validate_execution(desired_pose)
             
-    def validate_execution(self, desired_pose):
-        curr_translation = self.fa.get_pose().translation
-        desired_translation = self.fa.get_pose().translation
-        if np.linalg.norm(desired_translation - curr_translation) > 0.15:
-            raise Exception("Did not reach desired position")
+    def validate_execution(self, desired_pose=None, desired_joints=None, use_joints=False):
+        """Raise exception if not reaching desired position"""
+        if use_joints:
+            curr_joints = self.fa.get_joint()
+            if np.linalg.norm(desired_joints - curr_joints) > 0.5: # TODO: tune these parameters
+                raise Exception("Did not reach desired joints")
+        else:
+            curr_translation = self.fa.get_pose().translation
+            desired_translation = desired_pose.translation
+            if np.linalg.norm(desired_translation - curr_translation) > 0.15:
+                raise Exception("Did not reach desired pose")
             
     async def async_collision_check(self, boxes, dt):
         """Asynchronous collision check"""
@@ -145,6 +153,7 @@ class ManipulationActionServerNode(Node):
         # go to initial pose if needed, this is more a safety feature, should not be relied on
         self.fa.goto_joints(joints_traj[0], use_impedance=False, block=False)
         self.wait_for_skill_with_collision_check()
+        self.validate_execution(desired_joints=joints_traj[0], use_joints=True)
 
         collision_task = asyncio.run_coroutine_threadsafe(
             self.async_collision_check(KIOSK_COLLISION_BOXES, dt), asyncio.get_event_loop()
@@ -179,6 +188,8 @@ class ManipulationActionServerNode(Node):
         if self.collision_detected:
             self.collision_detected = False
             raise Exception("In Collision with boxes, cancelling motion")
+        
+        self.validate_execution(desired_joints=joints_traj[-1], use_joints=True)
 
 
     def execute_trajectory_callback(self, goal_handle):
@@ -251,8 +262,9 @@ class ManipulationActionServerNode(Node):
                         duration=4.0, 
                         use_impedance=False,
                         block=False,
-                        cartesian_impedances=[2000.0, 2000.0, 600.0, 50.0, 50.0, 50.0])
+                        cartesian_impedances=self.pickup_place_impedances)
             self.wait_for_skill_with_collision_check()
+            self.validate_execution(desired_pose=pose_traj[0], use_joints=False)
 
         self.fa.goto_pose(pose_traj[1], 
                     duration=T, 
@@ -300,6 +312,7 @@ class ManipulationActionServerNode(Node):
         if self.collision_detected:
             self.collision_detected = False
             raise Exception("In Collision with boxes, cancelling motion")
+        self.validate_execution(desired_pose=pose_traj[-1], use_joints=False)
 
     def execute_pickup(self, pickup_point):
         '''
@@ -323,6 +336,7 @@ class ManipulationActionServerNode(Node):
         self.fa.goto_pose(new_pose, cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, use_impedance=False, block=False)
         self.get_logger().info("Moving above grasp point...")
         self.wait_for_skill_with_collision_check()
+        self.validate_execution(new_pose)
 
         # move down
         self.get_logger().info("Moving Down...")
@@ -449,9 +463,11 @@ class ManipulationActionServerNode(Node):
         new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
         new_pose.translation = [destination_x, destination_y, destination_z+0.05]
         new_pose.rotation = default_rotation
-        self.fa.goto_pose(new_pose, cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, use_impedance=False, block=False) # TODO Change impedances?
+        self.fa.goto_pose(new_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=False, block=False) # TODO Change impedances?
         self.get_logger().info("Moving above release point...")
         self.wait_for_skill_with_collision_check()
+        self.validate_execution(new_pose)
+
         
         # disable vacuum
         disable_req = Trigger.Request()
@@ -468,11 +484,15 @@ class ManipulationActionServerNode(Node):
         self.get_logger().info("Moving back to check position...")
         self.fa.goto_pose(check_pose, cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, use_impedance=False, block=False)
         self.wait_for_skill_with_collision_check()
+        self.validate_execution(check_pose)
+
 
 
     def reset_arm(self):
         try:
-            self.fa.reset_joints()
+            self.fa.reset_joints(block=False)
+            self.wait_for_skill_with_collision_check()
+            self.validate_execution(desired_joints=FC.HOME_JOINTS, use_joints=True)
         except:
             return False
         finally:
