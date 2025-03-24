@@ -21,16 +21,15 @@ find_package(action_msgs REQUIRED)
 # find_package(snaak_pneumatic REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
-  "action/FollowTrajectory.action"
+  "action/ExecuteTrajectory.action"
   "action/Pickup.action"
-  "action/ManipulateIngredient.action"
-  "action/ReturnToHome.action"
+  "action/ReturnHome.action"
+  "action/Place.action"
   DEPENDENCIES geometry_msgs
 )
 
 install(PROGRAMS
-  scripts/manipulation_actions_node.py
-  scripts/manipulation_primary_node.py
+  scripts/snaak_manipulation_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -40,5 +39,5 @@ install(DIRECTORY
   DESTINATION share/${PROJECT_NAME}/
 )
 
-
+ament_python_install_package(scripts)
 ament_package()
