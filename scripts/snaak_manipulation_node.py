@@ -116,7 +116,7 @@ class ManipulationActionServerNode(Node):
     def validate_execution(self, desired_pose=None, desired_joints=None, use_joints=False):
         """Raise exception if not reaching desired position"""
         if use_joints:
-            curr_joints = self.fa.get_joint()
+            curr_joints = self.fa.get_joints()
             if np.linalg.norm(desired_joints - curr_joints) > 0.5: # TODO: tune these parameters
                 raise Exception("Did not reach desired joints")
         else:
