@@ -20,11 +20,11 @@ import asyncio
 from scripts.snaak_manipulation_utils import pickup_traj, get_traj_file
 import sys
 
-from scripts.snaak_manipulation_constants import KIOSK_COLLISION_BOXES, TRAJECTORY_ID_MAP
+from scripts.snaak_manipulation_constants import KIOSK_COLLISION_BOXES
 
 class ManipulationActionServerNode(Node):
     def __init__(self):
-        super().__init__('manipulation_action_server')
+        super().__init__('snaak_manipulation')
 
         # TODO transfer these into FSM 
         self.declare_parameter('ham_bin_id', 'bin1')
@@ -121,7 +121,7 @@ class ManipulationActionServerNode(Node):
         """Raise exception if not reaching desired position"""
         if use_joints:
             curr_joints = self.fa.get_joints()
-            if np.linalg.norm(desired_joints - curr_joints) > 0.5: # TODO: tune these parameters
+            if np.linalg.norm(desired_joints - curr_joints) > 0.25: # TODO: tune these parameters
                 raise Exception("Did not reach desired joints")
         else:
             curr_translation = self.fa.get_pose().translation
