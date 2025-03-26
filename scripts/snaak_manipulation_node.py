@@ -70,6 +70,9 @@ class ManipulationActionServerNode(Node):
             self.execute_rth_callback
         )
 
+        self._enable_srv = self.create_service(Trigger, 'snaak_manipulation/enable_arm', self.enable_callback)
+        self._disable_srv = self.create_service(Trigger, 'snaak_pneumatic/disable_arm', self.disable_callback)
+
         self._disable_vacuum_client = self.create_client(Trigger, '/snaak_pneumatic/disable_vacuum')
         self._enable_vacuum_client = self.create_client(Trigger, '/snaak_pneumatic/enable_vacuum')
         self._eject_vacuum_client = self.create_client(SetBool, '/snaak_pneumatic/eject_vacuum')
@@ -82,6 +85,7 @@ class ManipulationActionServerNode(Node):
 
         self.collision_detected = False
         self.current_location = 'home'
+        self.arm_enabled = True
 
     def wait_for_service_clients(self):
         clients = [
@@ -116,8 +120,8 @@ class ManipulationActionServerNode(Node):
     def validate_execution(self, desired_pose=None, desired_joints=None, use_joints=False):
         """Raise exception if not reaching desired position"""
         if use_joints:
-            curr_joints = self.fa.get_joint()
-            if np.linalg.norm(desired_joints - curr_joints) > 0.5: # TODO: tune these parameters
+            curr_joints = self.fa.get_joints()
+            if np.linalg.norm(desired_joints - curr_joints) > 0.2: # TODO: tune these parameters
                 raise Exception("Did not reach desired joints")
         else:
             curr_translation = self.fa.get_pose().translation
@@ -133,6 +137,18 @@ class ManipulationActionServerNode(Node):
                 self.collision_detected = True
                 return
             await asyncio.sleep(dt)
+
+    def enable_callback(self, request, response):
+        self.arm_enabled = True
+        response.success = True
+        response.message = "Arm enabled"
+        return response
+    
+    def disable_callback(self, request, response):
+        self.arm_enabled = False
+        response.success = True
+        response.message = "Arm enabled"
+        return response
 
     def execute_joint_trajectory(self, traj_file_path):
         with open(traj_file_path, 'rb') as pkl_f:
@@ -193,6 +209,10 @@ class ManipulationActionServerNode(Node):
 
 
     def execute_trajectory_callback(self, goal_handle):
+        if not self.arm_enabled:
+            goal_handle.abort()
+            return ExecuteTrajectory.Result()
+        
         share_directory = get_package_share_directory('snaak_manipulation')
         desired_end_location = goal_handle.request.desired_location
         try:
@@ -358,6 +378,10 @@ class ManipulationActionServerNode(Node):
     def execute_pickup_callback(self, goal_handle):
         success = False
         result = Pickup.Result()
+        if not self.arm_enabled:
+            goal_handle.abort()
+            return result
+        
         ingredient_type = goal_handle.request.ingredient_type # TODO: Integrate this if need seperate pickup techniques
 
         try:
@@ -398,6 +422,9 @@ class ManipulationActionServerNode(Node):
     def execute_place_callback(self, goal_handle):
         success = False
         result = Place.Result()
+        if not self.arm_enabled:
+            goal_handle.abort()
+            return result
         try:
             destination_x = goal_handle.request.x
             destination_y = goal_handle.request.y
@@ -500,6 +527,10 @@ class ManipulationActionServerNode(Node):
             return True
 
     def execute_rth_callback(self, goal_handle):
+        if not self.arm_enabled:
+            goal_handle.abort()
+            return ReturnHome.Result()
+
         success = True
         if self.current_location == 'home':
             success = self.reset_arm()
