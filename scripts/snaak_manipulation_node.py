@@ -71,7 +71,7 @@ class ManipulationActionServerNode(Node):
         )
 
         self._enable_srv = self.create_service(Trigger, 'snaak_manipulation/enable_arm', self.enable_callback)
-        self._disable_srv = self.create_service(Trigger, 'snaak_pneumatic/disable_arm', self.disable_callback)
+        self._disable_srv = self.create_service(Trigger, 'snaak_manipulation/disable_arm', self.disable_callback)
 
         self._disable_vacuum_client = self.create_client(Trigger, '/snaak_pneumatic/disable_vacuum')
         self._enable_vacuum_client = self.create_client(Trigger, '/snaak_pneumatic/enable_vacuum')
@@ -121,7 +121,7 @@ class ManipulationActionServerNode(Node):
         """Raise exception if not reaching desired position"""
         if use_joints:
             curr_joints = self.fa.get_joints()
-            if np.linalg.norm(desired_joints - curr_joints) > 0.2: # TODO: tune these parameters
+            if np.linalg.norm(desired_joints - curr_joints) > 0.25: # TODO: tune these parameters
                 raise Exception("Did not reach desired joints")
         else:
             curr_translation = self.fa.get_pose().translation
@@ -147,7 +147,7 @@ class ManipulationActionServerNode(Node):
     def disable_callback(self, request, response):
         self.arm_enabled = False
         response.success = True
-        response.message = "Arm enabled"
+        response.message = "Arm disabled"
         return response
 
     def execute_joint_trajectory(self, traj_file_path):
@@ -211,6 +211,7 @@ class ManipulationActionServerNode(Node):
     def execute_trajectory_callback(self, goal_handle):
         if not self.arm_enabled:
             goal_handle.abort()
+            self.get_logger().error("Arm Disabled")
             return ExecuteTrajectory.Result()
         
         share_directory = get_package_share_directory('snaak_manipulation')
@@ -380,6 +381,7 @@ class ManipulationActionServerNode(Node):
         result = Pickup.Result()
         if not self.arm_enabled:
             goal_handle.abort()
+            self.get_logger().error("Arm Disabled")
             return result
         
         ingredient_type = goal_handle.request.ingredient_type # TODO: Integrate this if need seperate pickup techniques
@@ -424,6 +426,7 @@ class ManipulationActionServerNode(Node):
         result = Place.Result()
         if not self.arm_enabled:
             goal_handle.abort()
+            self.get_logger().error("Arm Disabled")
             return result
         try:
             destination_x = goal_handle.request.x
@@ -529,6 +532,7 @@ class ManipulationActionServerNode(Node):
     def execute_rth_callback(self, goal_handle):
         if not self.arm_enabled:
             goal_handle.abort()
+            self.get_logger().error("Arm Disabled")
             return ReturnHome.Result()
 
         success = True
