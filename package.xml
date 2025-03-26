@@ -18,6 +18,7 @@
   <depend>action_msgs</depend>
   <depend>ament_index_python</depend>
   <exec_depend>snaak_pneumatic</exec_depend>
+  <exec_depend>example_interfaces</exec_depend>
   
   <buildtool_depend>rosidl_default_generators</buildtool_depend>
   <exec_depend>rosidl_default_runtime</exec_depend>
