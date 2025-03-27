@@ -121,12 +121,12 @@ class ManipulationActionServerNode(Node):
         """Raise exception if not reaching desired position"""
         if use_joints:
             curr_joints = self.fa.get_joints()
-            if np.linalg.norm(desired_joints - curr_joints) > 0.25: # TODO: tune these parameters
+            if np.linalg.norm(desired_joints - curr_joints) > 0.1: # TODO: tune these parameters
                 raise Exception("Did not reach desired joints")
         else:
             curr_translation = self.fa.get_pose().translation
             desired_translation = desired_pose.translation
-            if np.linalg.norm(desired_translation - curr_translation) > 0.15:
+            if np.linalg.norm(desired_translation - curr_translation) > 0.05:
                 raise Exception("Did not reach desired pose")
             
     async def async_collision_check(self, boxes, dt):
@@ -216,10 +216,11 @@ class ManipulationActionServerNode(Node):
         
         share_directory = get_package_share_directory('snaak_manipulation')
         desired_end_location = goal_handle.request.desired_location
+        result = ExecuteTrajectory.Result()
+
         try:
             if self.current_location != desired_end_location:
                 traj_file_path = get_traj_file(share_directory, self.current_location, desired_end_location)
-                result = ExecuteTrajectory.Result()
                 
                 success = False
                 if traj_file_path is None:
