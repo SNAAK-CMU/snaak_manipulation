@@ -217,12 +217,11 @@ class ManipulationActionServerNode(Node):
         share_directory = get_package_share_directory('snaak_manipulation')
         desired_end_location = goal_handle.request.desired_location
         result = ExecuteTrajectory.Result()
-
+        success = False
         try:
             if self.current_location != desired_end_location:
                 traj_file_path = get_traj_file(share_directory, self.current_location, desired_end_location)
                 
-                success = False
                 if traj_file_path is None:
                     self.get_logger().error("Invalid Trajectory")
                     goal_handle.abort()
@@ -239,7 +238,8 @@ class ManipulationActionServerNode(Node):
             goal_handle.abort()
             raise e
         finally:
-            if success: goal_handle.succeed()
+            if success:
+                goal_handle.succeed()
             pose = self.fa.get_pose()
             transform = Transform()
             transform.translation = Vector3(
@@ -347,6 +347,7 @@ class ManipulationActionServerNode(Node):
             none
         '''
         self.fa.wait_for_skill() 
+        pre_grasp_pose = self.fa.get_pose()
         destination_x, destination_y, destination_z = pickup_point
         # TODO put z offset here?
         default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
@@ -377,6 +378,11 @@ class ManipulationActionServerNode(Node):
         pose_traj, dt, T = pickup_traj(destination_x, destination_y, curr_z, self.pre_grasp_height)
         self.execute_pose_trajectory(pose_traj, dt, T)
 
+        # move to pre-grasp pose
+        self.fa.goto_pose(pre_grasp_pose, use_impedance=False, block=False)
+        self.wait_for_skill_with_collision_check()
+        self.validate_execution(pre_grasp_pose)
+        
     def execute_pickup_callback(self, goal_handle):
         success = False
         result = Pickup.Result()
