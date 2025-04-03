@@ -121,12 +121,12 @@ class ManipulationActionServerNode(Node):
         """Raise exception if not reaching desired position"""
         if use_joints:
             curr_joints = self.fa.get_joints()
-            if np.linalg.norm(desired_joints - curr_joints) > 0.1: # TODO: tune these parameters
+            if np.linalg.norm(curr_joints - desired_joints, np.inf) > 0.05: # TODO: tune these parameters
                 raise Exception("Did not reach desired joints")
         else:
             curr_translation = self.fa.get_pose().translation
             desired_translation = desired_pose.translation
-            if np.linalg.norm(desired_translation - curr_translation) > 0.05:
+            if np.linalg.norm(desired_translation - curr_translation, np.inf) > 0.06:
                 raise Exception("Did not reach desired pose")
             
     async def async_collision_check(self, boxes, dt):
@@ -167,9 +167,12 @@ class ManipulationActionServerNode(Node):
         self.collision_detected = False
 
         # go to initial pose if needed, this is more a safety feature, should not be relied on
-        self.fa.goto_joints(joints_traj[0], use_impedance=False, block=False)
-        self.wait_for_skill_with_collision_check()
-        self.validate_execution(desired_joints=joints_traj[0], use_joints=True)
+        curr_joints = self.fa.get_joints()
+        if (np.linalg.norm(curr_joints - joints_traj[0]) > 0.06):
+            self.get_logger().info("Moving to start of trajectory...")
+            self.fa.goto_joints(joints_traj[0], use_impedance=False, block=False)
+            self.wait_for_skill_with_collision_check()
+            self.validate_execution(desired_joints=joints_traj[0], use_joints=True)
 
         collision_task = asyncio.run_coroutine_threadsafe(
             self.async_collision_check(KIOSK_COLLISION_BOXES, dt), asyncio.get_event_loop()
@@ -382,7 +385,7 @@ class ManipulationActionServerNode(Node):
         self.fa.goto_pose(pre_grasp_pose, use_impedance=False, block=False)
         self.wait_for_skill_with_collision_check()
         self.validate_execution(pre_grasp_pose)
-        
+
     def execute_pickup_callback(self, goal_handle):
         success = False
         result = Pickup.Result()
