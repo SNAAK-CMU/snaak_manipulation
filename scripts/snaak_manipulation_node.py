@@ -95,6 +95,7 @@ class ManipulationActionServerNode(Node):
         self.current_location = 'home'
         self.arm_enabled = True
         self.prev_tf = None
+        self.transformations = {}
 
     def tf_listener_callback_tf(self, msg):
         """Handle incoming transform messages."""
@@ -125,14 +126,19 @@ class ManipulationActionServerNode(Node):
             self.get_logger().info(f"Parameter '{parameter.name}' updated to: {parameter.value}")
         return rclpy.parameter.SetParametersResult(successful=True)
     
-    def wait_for_skill_with_collision_check(self):
+    def wait_for_skill_with_collision_check(self, validate=True):
+        #start_time = time.time()
         while(not self.fa.is_skill_done()):
             if (self.fa.is_joints_in_collision_with_boxes(boxes=KIOSK_COLLISION_BOXES)):
                 self.fa.stop_skill()
                 self.fa.wait_for_skill()
-                raise Exception("In Collision with boxes, cancelling motion")
+                raise Exception("In Collision with boxes, cancelling motion...")
+            # if (time.time() - start_time > 10):
+            #     self.fa.stop_skill()
+            #     self.fa.wait_for_skill()
+            #     raise Exception("Timed out, arm not responsive...")
             time.sleep(0.01)
-        self.validate_execution()
+        #if validate: self.validate_execution()
             
     # def validate_execution(self, desired_pose=None, desired_joints=None, use_joints=False):
     #     """Raise exception if not reaching desired position"""
@@ -146,7 +152,7 @@ class ManipulationActionServerNode(Node):
     #         if np.linalg.norm(desired_translation - curr_translation) > 0.15:
     #             raise Exception("Did not reach desired pose")
             
-    def validate_execution(self, prev_tf):
+    def validate_execution(self):
         """Raise exception if arm not responding"""
         transform_name = ("panda_link0", "panda_hand")
         curr_tf = copy.deepcopy(
@@ -162,7 +168,7 @@ class ManipulationActionServerNode(Node):
             self.prev_tf.translation.y,
             self.prev_tf.translation.z
         ])
-        if (np.linalg.norm(prev_translation - curr_translation) < 0.05):
+        if (np.linalg.norm(prev_translation - curr_translation) < 0.01):
             raise Exception("Arm not responsive...")
 
     def get_prev_tf(self):
@@ -170,7 +176,7 @@ class ManipulationActionServerNode(Node):
         self.prev_tf = copy.deepcopy(
             self.transformations[transform_name].transform
         )
-
+        time.sleep(0.5)
 
     async def async_collision_check(self, boxes, dt):
         """Asynchronous collision check"""
@@ -211,16 +217,16 @@ class ManipulationActionServerNode(Node):
 
         # go to initial pose if needed, this is more a safety feature, should not be relied on
         curr_joints = self.fa.get_joints()
-        if (np.linalg.norm(curr_joints - joints_traj[0]) > 0.06):
+        if (np.linalg.norm(curr_joints - joints_traj[0]) > 0.04):
             self.get_logger().info("Moving to start of trajectory...")
-            self.get_prev_tf()
+            #self.get_prev_tf()
             self.fa.goto_joints(joints_traj[0], use_impedance=False, block=False)
-            self.wait_for_skill_with_collision_check()
+            self.wait_for_skill_with_collision_check(validate=False)
 
         collision_task = asyncio.run_coroutine_threadsafe(
             self.async_collision_check(KIOSK_COLLISION_BOXES, dt), asyncio.get_event_loop()
         )  
-        self.get_prev_tf()
+        #self.get_prev_tf()
         self.fa.goto_joints(joints_traj[1], duration=T, dynamic=True, buffer_time=1)
         init_time = self.fa.get_time()
         for i in range(2, len(joints_traj)):
@@ -251,7 +257,7 @@ class ManipulationActionServerNode(Node):
             self.collision_detected = False
             raise Exception("In Collision with boxes, cancelling motion")
         
-        self.validate_execution()
+        #self.validate_execution()
 
 
     def execute_trajectory_callback(self, goal_handle):
@@ -326,7 +332,7 @@ class ManipulationActionServerNode(Node):
             none
         '''
         if not at_start:
-            self.get_prev_tf()
+            #self.get_prev_tf()
             self.fa.goto_pose(pose_traj[0], 
                         duration=4.0, 
                         use_impedance=False,
@@ -334,7 +340,7 @@ class ManipulationActionServerNode(Node):
                         cartesian_impedances=self.pickup_place_impedances)
             self.wait_for_skill_with_collision_check()
 
-        self.get_prev_tf()
+        #self.get_prev_tf()
         self.fa.goto_pose(pose_traj[1], 
                     duration=T, 
                     dynamic=True, 
@@ -381,7 +387,7 @@ class ManipulationActionServerNode(Node):
         if self.collision_detected:
             self.collision_detected = False
             raise Exception("In Collision with boxes, cancelling motion")
-        self.validate_execution()
+        #self.validate_execution()
 
     def execute_pickup(self, pickup_point):
         '''
@@ -394,7 +400,7 @@ class ManipulationActionServerNode(Node):
             none
         '''
         self.fa.wait_for_skill() 
-        pre_grasp_pose = self.fa.get_pose()
+        pre_grasp_joints = self.fa.get_joints()
         destination_x, destination_y, destination_z = pickup_point
         # TODO put z offset here?
         default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
@@ -405,7 +411,7 @@ class ManipulationActionServerNode(Node):
         new_pose.rotation = default_rotation
         self.fa.goto_pose(new_pose, cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, use_impedance=False, block=False)
         self.get_logger().info("Moving above grasp point...")
-        self.get_prev_tf()
+        #self.get_prev_tf()
         self.wait_for_skill_with_collision_check()
 
         # move down
@@ -426,8 +432,8 @@ class ManipulationActionServerNode(Node):
         self.execute_pose_trajectory(pose_traj, dt, T)
 
         # move to pre-grasp pose
-        self.fa.goto_pose(pre_grasp_pose, use_impedance=False, block=False)
-        self.get_prev_tf()
+        self.fa.goto_joints(pre_grasp_joints, use_impedance=False, block=False)
+        #self.get_prev_tf()
         self.wait_for_skill_with_collision_check()
 
     def execute_pickup_callback(self, goal_handle):
@@ -538,7 +544,7 @@ class ManipulationActionServerNode(Node):
         '''
 
         self.fa.wait_for_skill()
-        check_pose = self.fa.get_pose()
+        check_joints = self.fa.get_joints()
         self.get_logger().info("Executing Sliced Ingredient Place maneuver...")
         destination_x, destination_y, destination_z = place_point
         default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
@@ -549,7 +555,7 @@ class ManipulationActionServerNode(Node):
         new_pose.rotation = default_rotation
         self.fa.goto_pose(new_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=False, block=False) # TODO Change impedances?
         self.get_logger().info("Moving above release point...")
-        self.get_prev_tf()
+        #self.get_prev_tf()
         self.wait_for_skill_with_collision_check()
 
         
@@ -566,17 +572,17 @@ class ManipulationActionServerNode(Node):
 
         #TODO add go to pre-place position and execute collision check
         self.get_logger().info("Moving back to check position...")
-        self.fa.goto_pose(check_pose, cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, use_impedance=False, block=False)
-        self.get_prev_tf()
+        self.fa.goto_joints(check_joints, cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, use_impedance=False, block=False)
+        #self.get_prev_tf()
         self.wait_for_skill_with_collision_check()
 
 
     def reset_arm(self):
         try:
-            self.get_prev_tf()
+            #self.get_prev_tf()
             self.fa.reset_joints(block=False)
             self.wait_for_skill_with_collision_check()
-            self.validate_execution()
+            #self.validate_execution()
         except:
             return False
         finally:
