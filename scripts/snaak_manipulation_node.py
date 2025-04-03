@@ -19,6 +19,10 @@ from example_interfaces.srv import SetBool
 import asyncio
 from scripts.snaak_manipulation_utils import pickup_traj, get_traj_file
 import sys
+from tf2_msgs.msg import TFMessage
+import copy
+
+
 
 from scripts.snaak_manipulation_constants import KIOSK_COLLISION_BOXES
 
@@ -70,6 +74,10 @@ class ManipulationActionServerNode(Node):
             self.execute_rth_callback
         )
 
+        self.subscription_tf = self.create_subscription(
+            TFMessage, "/tf", self.tf_listener_callback_tf, 10
+        )
+
         self._enable_srv = self.create_service(Trigger, 'snaak_manipulation/enable_arm', self.enable_callback)
         self._disable_srv = self.create_service(Trigger, 'snaak_manipulation/disable_arm', self.disable_callback)
 
@@ -86,6 +94,15 @@ class ManipulationActionServerNode(Node):
         self.collision_detected = False
         self.current_location = 'home'
         self.arm_enabled = True
+        self.prev_tf = None
+
+    def tf_listener_callback_tf(self, msg):
+        """Handle incoming transform messages."""
+        for transform in msg.transforms:
+            if transform.child_frame_id and transform.header.frame_id:
+                self.transformations[
+                    (transform.header.frame_id, transform.child_frame_id)
+                ] = transform
 
     def wait_for_service_clients(self):
         clients = [
@@ -115,20 +132,46 @@ class ManipulationActionServerNode(Node):
                 self.fa.wait_for_skill()
                 raise Exception("In Collision with boxes, cancelling motion")
             time.sleep(0.01)
-        #self.validate_execution(desired_pose)
+        self.validate_execution()
             
-    def validate_execution(self, desired_pose=None, desired_joints=None, use_joints=False):
-        """Raise exception if not reaching desired position"""
-        if use_joints:
-            curr_joints = self.fa.get_joints()
-            if np.linalg.norm(curr_joints - desired_joints, np.inf) > 0.05: # TODO: tune these parameters
-                raise Exception("Did not reach desired joints")
-        else:
-            curr_translation = self.fa.get_pose().translation
-            desired_translation = desired_pose.translation
-            if np.linalg.norm(desired_translation - curr_translation, np.inf) > 0.06:
-                raise Exception("Did not reach desired pose")
+    # def validate_execution(self, desired_pose=None, desired_joints=None, use_joints=False):
+    #     """Raise exception if not reaching desired position"""
+    #     if use_joints:
+    #         curr_joints = self.fa.get_joints()
+    #         if np.linalg.norm(desired_joints - curr_joints) > 0.25: # TODO: tune these parameters
+    #             raise Exception("Did not reach desired joints")
+    #     else:
+    #         curr_translation = self.fa.get_pose().translation
+    #         desired_translation = desired_pose.translation
+    #         if np.linalg.norm(desired_translation - curr_translation) > 0.15:
+    #             raise Exception("Did not reach desired pose")
             
+    def validate_execution(self, prev_tf):
+        """Raise exception if arm not responding"""
+        transform_name = ("panda_link0", "panda_hand")
+        curr_tf = copy.deepcopy(
+                    self.transformations[transform_name].transform
+                )
+        curr_translation = np.array([
+            curr_tf.translation.x,
+            curr_tf.translation.y,
+            curr_tf.translation.z,
+        ])
+        prev_translation = np.array([
+            self.prev_tf.translation.x,
+            self.prev_tf.translation.y,
+            self.prev_tf.translation.z
+        ])
+        if (np.linalg.norm(prev_translation - curr_translation) < 0.05):
+            raise Exception("Arm not responsive...")
+
+    def get_prev_tf(self):
+        transform_name = ("panda_link0", "panda_hand")
+        self.prev_tf = copy.deepcopy(
+            self.transformations[transform_name].transform
+        )
+
+
     async def async_collision_check(self, boxes, dt):
         """Asynchronous collision check"""
         while not self.collision_detected:
@@ -170,14 +213,14 @@ class ManipulationActionServerNode(Node):
         curr_joints = self.fa.get_joints()
         if (np.linalg.norm(curr_joints - joints_traj[0]) > 0.06):
             self.get_logger().info("Moving to start of trajectory...")
+            self.get_prev_tf()
             self.fa.goto_joints(joints_traj[0], use_impedance=False, block=False)
             self.wait_for_skill_with_collision_check()
-            self.validate_execution(desired_joints=joints_traj[0], use_joints=True)
 
         collision_task = asyncio.run_coroutine_threadsafe(
             self.async_collision_check(KIOSK_COLLISION_BOXES, dt), asyncio.get_event_loop()
         )  
-
+        self.get_prev_tf()
         self.fa.goto_joints(joints_traj[1], duration=T, dynamic=True, buffer_time=1)
         init_time = self.fa.get_time()
         for i in range(2, len(joints_traj)):
@@ -208,7 +251,7 @@ class ManipulationActionServerNode(Node):
             self.collision_detected = False
             raise Exception("In Collision with boxes, cancelling motion")
         
-        self.validate_execution(desired_joints=joints_traj[-1], use_joints=True)
+        self.validate_execution()
 
 
     def execute_trajectory_callback(self, goal_handle):
@@ -283,14 +326,15 @@ class ManipulationActionServerNode(Node):
             none
         '''
         if not at_start:
+            self.get_prev_tf()
             self.fa.goto_pose(pose_traj[0], 
                         duration=4.0, 
                         use_impedance=False,
                         block=False,
                         cartesian_impedances=self.pickup_place_impedances)
             self.wait_for_skill_with_collision_check()
-            self.validate_execution(desired_pose=pose_traj[0], use_joints=False)
 
+        self.get_prev_tf()
         self.fa.goto_pose(pose_traj[1], 
                     duration=T, 
                     dynamic=True, 
@@ -337,7 +381,7 @@ class ManipulationActionServerNode(Node):
         if self.collision_detected:
             self.collision_detected = False
             raise Exception("In Collision with boxes, cancelling motion")
-        self.validate_execution(desired_pose=pose_traj[-1], use_joints=False)
+        self.validate_execution()
 
     def execute_pickup(self, pickup_point):
         '''
@@ -361,8 +405,8 @@ class ManipulationActionServerNode(Node):
         new_pose.rotation = default_rotation
         self.fa.goto_pose(new_pose, cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, use_impedance=False, block=False)
         self.get_logger().info("Moving above grasp point...")
+        self.get_prev_tf()
         self.wait_for_skill_with_collision_check()
-        self.validate_execution(new_pose)
 
         # move down
         self.get_logger().info("Moving Down...")
@@ -383,8 +427,8 @@ class ManipulationActionServerNode(Node):
 
         # move to pre-grasp pose
         self.fa.goto_pose(pre_grasp_pose, use_impedance=False, block=False)
+        self.get_prev_tf()
         self.wait_for_skill_with_collision_check()
-        self.validate_execution(pre_grasp_pose)
 
     def execute_pickup_callback(self, goal_handle):
         success = False
@@ -505,8 +549,8 @@ class ManipulationActionServerNode(Node):
         new_pose.rotation = default_rotation
         self.fa.goto_pose(new_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=False, block=False) # TODO Change impedances?
         self.get_logger().info("Moving above release point...")
+        self.get_prev_tf()
         self.wait_for_skill_with_collision_check()
-        self.validate_execution(new_pose)
 
         
         # disable vacuum
@@ -523,16 +567,16 @@ class ManipulationActionServerNode(Node):
         #TODO add go to pre-place position and execute collision check
         self.get_logger().info("Moving back to check position...")
         self.fa.goto_pose(check_pose, cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, use_impedance=False, block=False)
+        self.get_prev_tf()
         self.wait_for_skill_with_collision_check()
-        self.validate_execution(check_pose)
-
 
 
     def reset_arm(self):
         try:
+            self.get_prev_tf()
             self.fa.reset_joints(block=False)
             self.wait_for_skill_with_collision_check()
-            self.validate_execution(desired_joints=FC.HOME_JOINTS, use_joints=True)
+            self.validate_execution()
         except:
             return False
         finally:
