@@ -318,7 +318,7 @@ class ManipulationActionServerNode(Node):
                     dynamic=True, 
                     buffer_time=1, 
                     use_impedance=False,
-                    cartesian_impedances=[2000.0, 2000.0, 600.0, 50.0, 50.0, 50.0]
+                    cartesian_impedances=self.pickup_place_impedances
         )
 
         # execute collision in sseperate thread
@@ -401,7 +401,7 @@ class ManipulationActionServerNode(Node):
         self.execute_pose_trajectory(pose_traj, dt, T)
 
         # move to pre-grasp pose
-        self.fa.goto_joints(pre_grasp_joints, use_impedance=False, block=False)
+        self.fa.goto_joints(pre_grasp_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
         self.wait_for_skill_with_collision_check()
 
     def execute_pickup_callback(self, goal_handle):
@@ -539,7 +539,7 @@ class ManipulationActionServerNode(Node):
 
         #TODO add go to pre-place position and execute collision check
         self.get_logger().info("Moving back to check position...")
-        self.fa.goto_joints(check_joints, cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, use_impedance=False, block=False)
+        self.fa.goto_joints(check_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
         self.wait_for_skill_with_collision_check()
 
 
