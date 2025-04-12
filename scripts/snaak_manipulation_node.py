@@ -89,7 +89,8 @@ class ManipulationActionServerNode(Node):
 
         self.fa = FrankaArm(init_rclpy=False)
         self.pre_grasp_height = 0.3
-        self.pickup_place_impedances = [2000.0, 2000.0, 600.0, 50.0, 50.0, 50.0]
+        #self.pickup_place_impedances = [2000.0, 2000.0, 600.0, 50.0, 50.0, 50.0]
+        self.pickup_place_impedances = [2000.0, 2000.0, 600.0, 100.0, 100.0, 100.0] # TODO: tune if notice instability
 
         self.collision_detected = False
         self.current_location = 'home'
@@ -97,6 +98,7 @@ class ManipulationActionServerNode(Node):
         self.prev_tf = None
         self.transformations = {}
         self.share_directory = get_package_share_directory('snaak_manipulation')
+        self.end_effector_offset = -0.025 # end effector thinks it is 2.5 cm longer than it is
 
     def tf_listener_callback_tf(self, msg):
         """Handle incoming transform messages."""
@@ -372,6 +374,7 @@ class ManipulationActionServerNode(Node):
         self.fa.wait_for_skill() 
         pre_grasp_joints = get_pre_place_pickup_joints(self.share_directory, self.current_location)
         destination_x, destination_y, destination_z = pickup_point
+        destination_z += self.end_effector_offset
         # TODO put z offset here?
         default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
         
@@ -379,7 +382,7 @@ class ManipulationActionServerNode(Node):
         new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
         new_pose.translation = [destination_x, destination_y, self.pre_grasp_height]
         new_pose.rotation = default_rotation
-        self.fa.goto_pose(new_pose, cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, use_impedance=False, block=False)
+        self.fa.goto_pose(new_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
         self.get_logger().info("Moving above grasp point...")
         self.wait_for_skill_with_collision_check()
 
@@ -515,17 +518,18 @@ class ManipulationActionServerNode(Node):
         check_joints = get_pre_place_pickup_joints(self.share_directory, self.current_location)
         self.get_logger().info("Executing Sliced Ingredient Place maneuver...")
         destination_x, destination_y, destination_z = place_point
+        destination_z += self.end_effector_offset
         default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
 
-        # move to x, y, (z + 0.05)
+        # move to x, y, (z + 0.02)
         new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
-        new_pose.translation = [destination_x, destination_y, destination_z+0.05]
+        new_pose.translation = [destination_x, destination_y, destination_z + 0.01]
         new_pose.rotation = default_rotation
         self.fa.goto_pose(new_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=False, block=False) # TODO Change impedances?
         self.get_logger().info("Moving above release point...")
         self.wait_for_skill_with_collision_check()
 
-        
+
         # disable vacuum
         disable_req = Trigger.Request()
         self.future = self._disable_vacuum_client.call_async(disable_req)
