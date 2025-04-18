@@ -203,7 +203,7 @@ class ManipulationActionServerNode(Node):
         collision_task = asyncio.run_coroutine_threadsafe(
             self.async_collision_check(KIOSK_COLLISION_BOXES, dt), asyncio.get_event_loop()
         )  
-        self.fa.goto_joints(joints_traj[1], duration=T, dynamic=True, buffer_time=1)
+        self.fa.goto_joints(joints_traj[1], joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, duration=T, dynamic=True, buffer_time=1)
         init_time = self.fa.get_time()
         for i in range(2, len(joints_traj)):
             traj_gen_proto_msg = JointPositionSensorMessage(
@@ -316,7 +316,7 @@ class ManipulationActionServerNode(Node):
             self.wait_for_skill_with_collision_check()
 
         self.fa.goto_pose(pose_traj[1], 
-                    duration=T*2, 
+                    duration=T, 
                     dynamic=True, 
                     buffer_time=1, 
                     use_impedance=False,
