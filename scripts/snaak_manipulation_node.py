@@ -88,7 +88,7 @@ class ManipulationActionServerNode(Node):
         self.wait_for_service_clients()
 
         self.fa = FrankaArm(init_rclpy=False)
-        self.pre_grasp_height = 0.3
+        self.pre_grasp_height = 0.29
         #self.pickup_place_impedances = [2000.0, 2000.0, 600.0, 50.0, 50.0, 50.0]
         self.pickup_place_impedances = [2000.0, 2000.0, 600.0, 90.0, 90.0, 90.0] # TODO: tune if notice instability
 
@@ -98,7 +98,7 @@ class ManipulationActionServerNode(Node):
         self.prev_tf = None
         self.transformations = {}
         self.share_directory = get_package_share_directory('snaak_manipulation')
-        self.end_effector_offset = -0.025 # end effector thinks it is 2.5 cm longer than it is
+        self.end_effector_offset = -0.025 # when the arm is down low, it has trouble getting down to the desired point TODO: ask Dr. Kroemer about this
 
     def tf_listener_callback_tf(self, msg):
         """Handle incoming transform messages."""
@@ -289,7 +289,7 @@ class ManipulationActionServerNode(Node):
             return result
         
 
-    def execute_pose_trajectory(self, pose_traj, dt, T, at_start=True):
+    def execute_pose_trajectory(self, pose_traj, dt, T, at_start=True, verbose=False):
         '''
         Follow a pose trajectory based on a list of rigid transforms
 
@@ -316,7 +316,7 @@ class ManipulationActionServerNode(Node):
             self.wait_for_skill_with_collision_check()
 
         self.fa.goto_pose(pose_traj[1], 
-                    duration=T, 
+                    duration=T*2, 
                     dynamic=True, 
                     buffer_time=1, 
                     use_impedance=False,
@@ -331,10 +331,14 @@ class ManipulationActionServerNode(Node):
         for i in range(2, len(pose_traj)):
             timestamp = self.fa.get_time() - init_time
             pose_tf = pose_traj[i]
+            #self.get_logger().info(f"Difference: {pose_tf.translation[2] - self.fa.get_pose().translation[2]}")
+            if verbose and i % 5 == 0:
+                self.get_logger().info(f"Height: {self.fa.get_pose().translation[2]}")
+                self.get_logger().info(f"Desired Height: {pose_tf.translation[2]}")
             traj_gen_proto_msg = PosePositionSensorMessage(
-                id=i, 
+                id=i,
                 timestamp=timestamp,
-                position=pose_tf.translation, 
+                position=pose_tf.translation, #+ [0, 0, self.end_effector_offset],
                 quaternion=pose_tf.quaternion
             )
             ros_msg = make_sensor_group_msg(
@@ -353,7 +357,8 @@ class ManipulationActionServerNode(Node):
             termination_handler_sensor_msg=sensor_proto2ros_msg(
                 term_proto_msg, SensorDataMessageType.SHOULD_TERMINATE)
             )
-        
+        #self.get_logger().info(f"Final height: {self.fa.get_pose().translation[2]}")
+
         self.fa.publish_sensor_data(ros_msg)
         self.fa.wait_for_skill()
         collision_task.cancel()
@@ -375,6 +380,7 @@ class ManipulationActionServerNode(Node):
         pre_grasp_joints = get_pre_place_pickup_joints(self.share_directory, self.current_location)
         destination_x, destination_y, destination_z = pickup_point
         destination_z += self.end_effector_offset
+
         # TODO put z offset here?
         default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
         
@@ -385,13 +391,16 @@ class ManipulationActionServerNode(Node):
         self.fa.goto_pose(new_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
         self.get_logger().info("Moving above grasp point...")
         self.wait_for_skill_with_collision_check()
-
+        self.get_logger().info(f"Translation: {self.fa.get_pose().translation}")
         # move down
         self.get_logger().info("Moving Down...")
         curr_z = self.fa.get_pose().translation[2]
         pose_traj, dt, T = pickup_traj(destination_x, destination_y, curr_z, destination_z)
         self.execute_pose_trajectory(pose_traj, dt, T)
+        #self.get_logger().info(f"Desired Translation: {pose_traj[-1].translation}")
+
         enable_req = Trigger.Request()
+        #self.get_logger().info(f"translation: {self.fa.get_pose().translation}")
 
         self.future = self._enable_vacuum_client.call_async(enable_req)
         rclpy.spin_until_future_complete(self, self.future)
