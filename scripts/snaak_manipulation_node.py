@@ -90,7 +90,7 @@ class ManipulationActionServerNode(Node):
         self.fa = FrankaArm(init_rclpy=False)
         self.pre_grasp_height = 0.29
         #self.pickup_place_impedances = [2000.0, 2000.0, 600.0, 50.0, 50.0, 50.0]
-        self.pickup_place_impedances = [2000.0, 2000.0, 600.0, 80.0, 80.0, 80.0] # TODO: tune if notice instability
+        self.pickup_place_impedances = [2000.0, 2000.0, 600.0, 70.0, 70.0, 70.0] # TODO: tune if notice instability
 
         self.collision_detected = False
         self.current_location = 'home'
