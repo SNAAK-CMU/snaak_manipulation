@@ -90,7 +90,7 @@ class ManipulationActionServerNode(Node):
         self.fa = FrankaArm(init_rclpy=False)
         self.pre_grasp_height = 0.29
         #self.pickup_place_impedances = [2000.0, 2000.0, 600.0, 50.0, 50.0, 50.0]
-        self.pickup_place_impedances = [2000.0, 2000.0, 600.0, 90.0, 90.0, 90.0] # TODO: tune if notice instability
+        self.pickup_place_impedances = [2000.0, 2000.0, 600.0, 80.0, 80.0, 80.0] # TODO: tune if notice instability
 
         self.collision_detected = False
         self.current_location = 'home'
@@ -185,7 +185,7 @@ class ManipulationActionServerNode(Node):
             "Trajectory not collected in guide mode"
         skill_state_dict = skill_data[0]['skill_state_dict']
 
-        dt = 0.01
+        dt = 0.005
 
         joints_traj = skill_state_dict['q']
         T = len(joints_traj) * dt
