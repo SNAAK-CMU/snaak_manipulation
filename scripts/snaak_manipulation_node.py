@@ -28,8 +28,9 @@ from scripts.snaak_manipulation_constants import KIOSK_COLLISION_BOXES
 
 class ManipulationActionServerNode(Node):
     def __init__(self):
-        super().__init__('snaak_manipulation')
-
+        super().__init__('snaak_manipulation', automatically_declare_parameters_from_overrides=True)
+        for param in self._parameters:
+            self.get_logger().info(f"Param: {param} = {self.get_parameter(param).value}")
         # TODO transfer these into FSM 
         self.declare_parameter('ham_bin_id', 'bin1')
         self.declare_parameter('cheese_bin_id', 'bin2')
@@ -98,8 +99,13 @@ class ManipulationActionServerNode(Node):
         self.prev_tf = None
         self.transformations = {}
         self.share_directory = get_package_share_directory('snaak_manipulation')
-        self.pickup_end_effector_offset = self.get_parameter('pickup_end_effector_offset').value
-        self.place_end_effector_offset = self.get_parameter('place_end_effector_offset').value
+
+        self.bin_end_effector_offsets = {
+            'bin1': self.get_parameter('bin_end_effector_offsets.bin1').value,
+            'bin2': self.get_parameter('bin_end_effector_offsets.bin2').value,
+            'bin3': self.get_parameter('bin_end_effector_offsets.bin3').value,
+        }
+        self.assembly_end_effector_offset = self.get_parameter('assembly_end_effector_offset').value
         self.gamma = 0.5
 
     def tf_listener_callback_tf(self, msg):
@@ -368,7 +374,7 @@ class ManipulationActionServerNode(Node):
             self.collision_detected = False
             raise Exception("In Collision with boxes, cancelling motion")
 
-    def execute_pickup(self, pickup_point):
+    def execute_pickup(self, pickup_point, bin_id):
         '''
         Executes pickup sequence
 
@@ -382,7 +388,7 @@ class ManipulationActionServerNode(Node):
         pre_grasp_joints = get_pre_place_pickup_joints(self.share_directory, self.current_location)
         destination_x, destination_y, destination_z = pickup_point
         desired_z = destination_z
-        destination_z += self.pickup_end_effector_offset
+        destination_z += self.bin_end_effector_offsets[f"bin{bin_id}"]
 
         # TODO put z offset here?
         default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
@@ -420,7 +426,12 @@ class ManipulationActionServerNode(Node):
         self.fa.goto_joints(pre_grasp_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
         self.wait_for_skill_with_collision_check()
 
-        self.pickup_end_effector_offset += self.gamma * (desired_z - actual_z) # lower z than desired should cause negative val
+        e = desired_z - actual_z
+        if (e > 0):
+            e = min(e, 0.02)
+        else:
+            e = max(e, -0.02)
+        self.bin_end_effector_offsets[f"bin{bin_id}"] += self.gamma * e # lower z than desired should cause negative val
 
 
     def execute_pickup_callback(self, goal_handle):
@@ -437,7 +448,8 @@ class ManipulationActionServerNode(Node):
             destination_x = goal_handle.request.x
             destination_y = goal_handle.request.y
             destination_z = goal_handle.request.z
-            self.execute_pickup((destination_x, destination_y, destination_z))
+            bin_id = goal_handle.request.bin_id
+            self.execute_pickup((destination_x, destination_y, destination_z), bin_id)
             success=True
         except Exception as e:
             self.get_logger().error(f"Error Occured during pickup motion {e} ")
@@ -535,7 +547,7 @@ class ManipulationActionServerNode(Node):
         self.get_logger().info("Executing Sliced Ingredient Place maneuver...")
         destination_x, destination_y, destination_z = place_point
         desired_z = destination_z
-        destination_z += self.place_end_effector_offset
+        destination_z += self.assembly_end_effector_offset
         default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
 
         # move to x, y, (z + 0.02)
@@ -562,7 +574,12 @@ class ManipulationActionServerNode(Node):
         self.get_logger().info("Moving back to check position...")
         self.fa.goto_joints(check_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
         self.wait_for_skill_with_collision_check()
-        self.place_end_effector_offset += self.gamma * (desired_z - actual_z)
+        e = desired_z - actual_z
+        if (e > 0):
+            e = min(e, 0.02)
+        else:
+            e = max(e, -0.02)   
+        self.assembly_end_effector_offset += self.gamma * e 
 
 
     def reset_arm(self):
@@ -613,7 +630,7 @@ def main(args=None):
     except KeyboardInterrupt:
         manipulation_action_server.get_logger().info('Keyboard interrupt received, shutting down...')
     finally:
-        save_offsets_to_yaml(manipulation_action_server.pickup_end_effector_offset, manipulation_action_server.place_end_effector_offset)
+        save_offsets_to_yaml(manipulation_action_server.bin_end_effector_offsets, manipulation_action_server.assembly_end_effector_offset)
         manipulation_action_server.fa.stop_robot_immediately()
         manipulation_action_server.destroy_node()
         rclpy.shutdown()
