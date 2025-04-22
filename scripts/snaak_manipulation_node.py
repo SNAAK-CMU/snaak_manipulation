@@ -17,7 +17,7 @@ import tf_transformations
 from autolab_core import RigidTransform
 from example_interfaces.srv import SetBool
 import asyncio
-from scripts.snaak_manipulation_utils import pickup_traj, get_traj_file, get_pre_place_pickup_joints
+from scripts.snaak_manipulation_utils import pickup_traj, get_traj_file, get_pre_place_pickup_joints, save_offsets_to_yaml
 import sys
 from tf2_msgs.msg import TFMessage
 import copy
@@ -98,7 +98,9 @@ class ManipulationActionServerNode(Node):
         self.prev_tf = None
         self.transformations = {}
         self.share_directory = get_package_share_directory('snaak_manipulation')
-        self.end_effector_offset = -0.025 # when the arm is down low, it has trouble getting down to the desired point TODO: ask Dr. Kroemer about this
+        self.pickup_end_effector_offset = self.get_parameter('pickup_end_effector_offset').value
+        self.place_end_effector_offset = self.get_parameter('place_end_effector_offset').value
+        self.gamma = 0.5
 
     def tf_listener_callback_tf(self, msg):
         """Handle incoming transform messages."""
@@ -379,7 +381,8 @@ class ManipulationActionServerNode(Node):
         self.fa.wait_for_skill() 
         pre_grasp_joints = get_pre_place_pickup_joints(self.share_directory, self.current_location)
         destination_x, destination_y, destination_z = pickup_point
-        destination_z += self.end_effector_offset
+        desired_z = destination_z
+        destination_z += self.pickup_end_effector_offset
 
         # TODO put z offset here?
         default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
@@ -397,6 +400,7 @@ class ManipulationActionServerNode(Node):
         curr_z = self.fa.get_pose().translation[2]
         pose_traj, dt, T = pickup_traj(destination_x, destination_y, curr_z, destination_z)
         self.execute_pose_trajectory(pose_traj, dt, T)
+        actual_z = self.fa.get_pose().translation[2]
         #self.get_logger().info(f"Desired Translation: {pose_traj[-1].translation}")
 
         enable_req = Trigger.Request()
@@ -415,6 +419,9 @@ class ManipulationActionServerNode(Node):
         # move to pre-grasp pose
         self.fa.goto_joints(pre_grasp_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
         self.wait_for_skill_with_collision_check()
+
+        self.pickup_end_effector_offset += self.gamma * (desired_z - actual_z) # lower z than desired should cause negative val
+
 
     def execute_pickup_callback(self, goal_handle):
         success = False
@@ -527,7 +534,8 @@ class ManipulationActionServerNode(Node):
         check_joints = get_pre_place_pickup_joints(self.share_directory, self.current_location)
         self.get_logger().info("Executing Sliced Ingredient Place maneuver...")
         destination_x, destination_y, destination_z = place_point
-        destination_z += self.end_effector_offset
+        desired_z = destination_z
+        destination_z += self.place_end_effector_offset
         default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
 
         # move to x, y, (z + 0.02)
@@ -537,7 +545,7 @@ class ManipulationActionServerNode(Node):
         self.fa.goto_pose(new_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=False, block=False) # TODO Change impedances?
         self.get_logger().info("Moving above release point...")
         self.wait_for_skill_with_collision_check()
-
+        actual_z = self.fa.get_pose().translation[2]
 
         # disable vacuum
         disable_req = Trigger.Request()
@@ -554,6 +562,7 @@ class ManipulationActionServerNode(Node):
         self.get_logger().info("Moving back to check position...")
         self.fa.goto_joints(check_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
         self.wait_for_skill_with_collision_check()
+        self.place_end_effector_offset += self.gamma * (desired_z - actual_z)
 
 
     def reset_arm(self):
@@ -592,7 +601,7 @@ class ManipulationActionServerNode(Node):
             self.current_location = 'home'
             goal_handle.succeed()
             return ReturnHome.Result()
-            
+        
 def main(args=None):
     # TODO add proper shutdown with FrankaPy
     rclpy.init(args=args)
@@ -604,6 +613,7 @@ def main(args=None):
     except KeyboardInterrupt:
         manipulation_action_server.get_logger().info('Keyboard interrupt received, shutting down...')
     finally:
+        save_offsets_to_yaml(manipulation_action_server.pickup_end_effector_offset, manipulation_action_server.place_end_effector_offset)
         manipulation_action_server.fa.stop_robot_immediately()
         manipulation_action_server.destroy_node()
         rclpy.shutdown()

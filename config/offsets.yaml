@@ -1,0 +1,4 @@
+snaak_manipulation:
+  ros__parameters:
+    pickup_end_effector_offset: -0.025
+    place_end_effector_offset: -0.025

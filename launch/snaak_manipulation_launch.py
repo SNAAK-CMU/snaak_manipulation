@@ -11,5 +11,7 @@ def generate_launch_description():
         launch_ros.actions.Node(
             package='snaak_manipulation',
             executable='snaak_manipulation_node.py',
-            name='snaak_manipulation'),
+            name='snaak_manipulation',
+            parameters=['config/offsets.yaml'])
+            
     ])
