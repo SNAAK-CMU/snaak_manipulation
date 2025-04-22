@@ -3,6 +3,7 @@ from scipy.integrate import cumtrapz
 from autolab_core import RigidTransform
 from scripts.snaak_manipulation_constants import TRAJECTORY_FILE_MAP, TRAJECTORY_ID_MAP
 import os
+import pickle
 
 def pickup_traj(x, y, start_z, end_z, step_size=0.001, acceleration = 0.1):
     '''
@@ -72,6 +73,22 @@ def pickup_traj(x, y, start_z, end_z, step_size=0.001, acceleration = 0.1):
     T = len(pose_traj) * dt
     return pose_traj, dt, T
 
+def get_pre_place_pickup_joints(package_share_directory, location):
+    """
+    Function to get the joint angles that correspond to the pre-pickup or pre-place position
+    """
+    traj_file_path = get_traj_file(package_share_directory, location, "home")
+    if traj_file_path is None:
+        raise Exception("Invalid location provided...")
+    with open(traj_file_path, 'rb') as pkl_f:
+        skill_data = pickle.load(pkl_f)
+
+    assert skill_data[0]['skill_description'] == 'GuideMode', \
+        "Trajectory not collected in guide mode"
+    skill_state_dict = skill_data[0]['skill_state_dict']
+
+    joints = skill_state_dict['q'][0]
+    return joints
 
 def get_traj_file(package_share_directory, curr_location, end_location):
     '''

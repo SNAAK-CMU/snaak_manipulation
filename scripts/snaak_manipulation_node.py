@@ -17,14 +17,18 @@ import tf_transformations
 from autolab_core import RigidTransform
 from example_interfaces.srv import SetBool
 import asyncio
-from scripts.snaak_manipulation_utils import pickup_traj, get_traj_file
+from scripts.snaak_manipulation_utils import pickup_traj, get_traj_file, get_pre_place_pickup_joints
 import sys
+from tf2_msgs.msg import TFMessage
+import copy
 
-from scripts.snaak_manipulation_constants import KIOSK_COLLISION_BOXES, TRAJECTORY_ID_MAP
+
+
+from scripts.snaak_manipulation_constants import KIOSK_COLLISION_BOXES
 
 class ManipulationActionServerNode(Node):
     def __init__(self):
-        super().__init__('manipulation_action_server')
+        super().__init__('snaak_manipulation')
 
         # TODO transfer these into FSM 
         self.declare_parameter('ham_bin_id', 'bin1')
@@ -70,6 +74,13 @@ class ManipulationActionServerNode(Node):
             self.execute_rth_callback
         )
 
+        self.subscription_tf = self.create_subscription(
+            TFMessage, "/tf", self.tf_listener_callback_tf, 10
+        )
+
+        self._enable_srv = self.create_service(Trigger, 'snaak_manipulation/enable_arm', self.enable_callback)
+        self._disable_srv = self.create_service(Trigger, 'snaak_manipulation/disable_arm', self.disable_callback)
+
         self._disable_vacuum_client = self.create_client(Trigger, '/snaak_pneumatic/disable_vacuum')
         self._enable_vacuum_client = self.create_client(Trigger, '/snaak_pneumatic/enable_vacuum')
         self._eject_vacuum_client = self.create_client(SetBool, '/snaak_pneumatic/eject_vacuum')
@@ -77,11 +88,25 @@ class ManipulationActionServerNode(Node):
         self.wait_for_service_clients()
 
         self.fa = FrankaArm(init_rclpy=False)
-        self.pre_grasp_height = 0.3
-        self.pickup_place_impedances = [2000.0, 2000.0, 600.0, 50.0, 50.0, 50.0]
+        self.pre_grasp_height = 0.29
+        #self.pickup_place_impedances = [2000.0, 2000.0, 600.0, 50.0, 50.0, 50.0]
+        self.pickup_place_impedances = [2000.0, 2000.0, 600.0, 70.0, 70.0, 70.0] # TODO: tune if notice instability
 
         self.collision_detected = False
         self.current_location = 'home'
+        self.arm_enabled = True
+        self.prev_tf = None
+        self.transformations = {}
+        self.share_directory = get_package_share_directory('snaak_manipulation')
+        self.end_effector_offset = -0.025 # when the arm is down low, it has trouble getting down to the desired point TODO: ask Dr. Kroemer about this
+
+    def tf_listener_callback_tf(self, msg):
+        """Handle incoming transform messages."""
+        for transform in msg.transforms:
+            if transform.child_frame_id and transform.header.frame_id:
+                self.transformations[
+                    (transform.header.frame_id, transform.child_frame_id)
+                ] = transform
 
     def wait_for_service_clients(self):
         clients = [
@@ -109,22 +134,28 @@ class ManipulationActionServerNode(Node):
             if (self.fa.is_joints_in_collision_with_boxes(boxes=KIOSK_COLLISION_BOXES)):
                 self.fa.stop_skill()
                 self.fa.wait_for_skill()
-                raise Exception("In Collision with boxes, cancelling motion")
+                raise Exception("In Collision with boxes, cancelling motion...")
             time.sleep(0.01)
-        #self.validate_execution(desired_pose)
             
-    def validate_execution(self, desired_pose=None, desired_joints=None, use_joints=False):
-        """Raise exception if not reaching desired position"""
-        if use_joints:
-            curr_joints = self.fa.get_joint()
-            if np.linalg.norm(desired_joints - curr_joints) > 0.5: # TODO: tune these parameters
-                raise Exception("Did not reach desired joints")
-        else:
-            curr_translation = self.fa.get_pose().translation
-            desired_translation = desired_pose.translation
-            if np.linalg.norm(desired_translation - curr_translation) > 0.15:
-                raise Exception("Did not reach desired pose")
-            
+    def validate_execution(self):
+        """Raise exception if arm not responding"""
+        transform_name = ("panda_link0", "panda_hand")
+        curr_tf = copy.deepcopy(
+                    self.transformations[transform_name].transform
+                )
+        curr_translation = np.array([
+            curr_tf.translation.x,
+            curr_tf.translation.y,
+            curr_tf.translation.z,
+        ])
+        prev_translation = np.array([
+            self.prev_tf.translation.x,
+            self.prev_tf.translation.y,
+            self.prev_tf.translation.z
+        ])
+        if (np.linalg.norm(prev_translation - curr_translation) < 0.01):
+            raise Exception("Arm not responsive...")
+
     async def async_collision_check(self, boxes, dt):
         """Asynchronous collision check"""
         while not self.collision_detected:
@@ -134,6 +165,18 @@ class ManipulationActionServerNode(Node):
                 return
             await asyncio.sleep(dt)
 
+    def enable_callback(self, request, response):
+        self.arm_enabled = True
+        response.success = True
+        response.message = "Arm enabled"
+        return response
+    
+    def disable_callback(self, request, response):
+        self.arm_enabled = False
+        response.success = True
+        response.message = "Arm disabled"
+        return response
+
     def execute_joint_trajectory(self, traj_file_path):
         with open(traj_file_path, 'rb') as pkl_f:
             skill_data = pickle.load(pkl_f)
@@ -142,7 +185,7 @@ class ManipulationActionServerNode(Node):
             "Trajectory not collected in guide mode"
         skill_state_dict = skill_data[0]['skill_state_dict']
 
-        dt = 0.01
+        dt = 0.005
 
         joints_traj = skill_state_dict['q']
         T = len(joints_traj) * dt
@@ -151,15 +194,16 @@ class ManipulationActionServerNode(Node):
         self.collision_detected = False
 
         # go to initial pose if needed, this is more a safety feature, should not be relied on
-        self.fa.goto_joints(joints_traj[0], use_impedance=False, block=False)
-        self.wait_for_skill_with_collision_check()
-        self.validate_execution(desired_joints=joints_traj[0], use_joints=True)
+        curr_joints = self.fa.get_joints()
+        if (np.linalg.norm(curr_joints - joints_traj[0]) > 0.04):
+            self.get_logger().info("Moving to start of trajectory...")
+            self.fa.goto_joints(joints_traj[0], use_impedance=False, block=False)
+            self.wait_for_skill_with_collision_check()
 
         collision_task = asyncio.run_coroutine_threadsafe(
             self.async_collision_check(KIOSK_COLLISION_BOXES, dt), asyncio.get_event_loop()
         )  
-
-        self.fa.goto_joints(joints_traj[1], duration=T, dynamic=True, buffer_time=1)
+        self.fa.goto_joints(joints_traj[1], joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, duration=T, dynamic=True, buffer_time=1)
         init_time = self.fa.get_time()
         for i in range(2, len(joints_traj)):
             traj_gen_proto_msg = JointPositionSensorMessage(
@@ -189,18 +233,20 @@ class ManipulationActionServerNode(Node):
             self.collision_detected = False
             raise Exception("In Collision with boxes, cancelling motion")
         
-        self.validate_execution(desired_joints=joints_traj[-1], use_joints=True)
-
 
     def execute_trajectory_callback(self, goal_handle):
-        share_directory = get_package_share_directory('snaak_manipulation')
+        if not self.arm_enabled:
+            goal_handle.abort()
+            self.get_logger().error("Arm Disabled")
+            return ExecuteTrajectory.Result()
+        
         desired_end_location = goal_handle.request.desired_location
+        result = ExecuteTrajectory.Result()
+        success = False
         try:
             if self.current_location != desired_end_location:
-                traj_file_path = get_traj_file(share_directory, self.current_location, desired_end_location)
-                result = ExecuteTrajectory.Result()
+                traj_file_path = get_traj_file(self.share_directory, self.current_location, desired_end_location)
                 
-                success = False
                 if traj_file_path is None:
                     self.get_logger().error("Invalid Trajectory")
                     goal_handle.abort()
@@ -217,7 +263,8 @@ class ManipulationActionServerNode(Node):
             goal_handle.abort()
             raise e
         finally:
-            if success: goal_handle.succeed()
+            if success:
+                goal_handle.succeed()
             pose = self.fa.get_pose()
             transform = Transform()
             transform.translation = Vector3(
@@ -242,7 +289,7 @@ class ManipulationActionServerNode(Node):
             return result
         
 
-    def execute_pose_trajectory(self, pose_traj, dt, T, at_start=True):
+    def execute_pose_trajectory(self, pose_traj, dt, T, at_start=True, verbose=False):
         '''
         Follow a pose trajectory based on a list of rigid transforms
 
@@ -257,6 +304,9 @@ class ManipulationActionServerNode(Node):
         Outputs:
             none
         '''
+        self.fa.wait_for_skill()
+        self.collision_detected = False
+
         if not at_start:
             self.fa.goto_pose(pose_traj[0], 
                         duration=4.0, 
@@ -264,16 +314,14 @@ class ManipulationActionServerNode(Node):
                         block=False,
                         cartesian_impedances=self.pickup_place_impedances)
             self.wait_for_skill_with_collision_check()
-            self.validate_execution(desired_pose=pose_traj[0], use_joints=False)
 
         self.fa.goto_pose(pose_traj[1], 
                     duration=T, 
                     dynamic=True, 
                     buffer_time=1, 
                     use_impedance=False,
-                    cartesian_impedances=[2000.0, 2000.0, 600.0, 50.0, 50.0, 50.0]
+                    cartesian_impedances=self.pickup_place_impedances
         )
-        self.collision_detected = False
 
         # execute collision in sseperate thread
         collision_task = asyncio.run_coroutine_threadsafe(
@@ -283,10 +331,14 @@ class ManipulationActionServerNode(Node):
         for i in range(2, len(pose_traj)):
             timestamp = self.fa.get_time() - init_time
             pose_tf = pose_traj[i]
+            #self.get_logger().info(f"Difference: {pose_tf.translation[2] - self.fa.get_pose().translation[2]}")
+            if verbose and i % 5 == 0:
+                self.get_logger().info(f"Height: {self.fa.get_pose().translation[2]}")
+                self.get_logger().info(f"Desired Height: {pose_tf.translation[2]}")
             traj_gen_proto_msg = PosePositionSensorMessage(
-                id=i, 
+                id=i,
                 timestamp=timestamp,
-                position=pose_tf.translation, 
+                position=pose_tf.translation, #+ [0, 0, self.end_effector_offset],
                 quaternion=pose_tf.quaternion
             )
             ros_msg = make_sensor_group_msg(
@@ -305,14 +357,14 @@ class ManipulationActionServerNode(Node):
             termination_handler_sensor_msg=sensor_proto2ros_msg(
                 term_proto_msg, SensorDataMessageType.SHOULD_TERMINATE)
             )
-        
+        #self.get_logger().info(f"Final height: {self.fa.get_pose().translation[2]}")
+
         self.fa.publish_sensor_data(ros_msg)
         self.fa.wait_for_skill()
         collision_task.cancel()
         if self.collision_detected:
             self.collision_detected = False
             raise Exception("In Collision with boxes, cancelling motion")
-        self.validate_execution(desired_pose=pose_traj[-1], use_joints=False)
 
     def execute_pickup(self, pickup_point):
         '''
@@ -325,7 +377,10 @@ class ManipulationActionServerNode(Node):
             none
         '''
         self.fa.wait_for_skill() 
+        pre_grasp_joints = get_pre_place_pickup_joints(self.share_directory, self.current_location)
         destination_x, destination_y, destination_z = pickup_point
+        destination_z += self.end_effector_offset
+
         # TODO put z offset here?
         default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
         
@@ -333,17 +388,19 @@ class ManipulationActionServerNode(Node):
         new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
         new_pose.translation = [destination_x, destination_y, self.pre_grasp_height]
         new_pose.rotation = default_rotation
-        self.fa.goto_pose(new_pose, cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, use_impedance=False, block=False)
+        self.fa.goto_pose(new_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
         self.get_logger().info("Moving above grasp point...")
         self.wait_for_skill_with_collision_check()
-        self.validate_execution(new_pose)
-
+        self.get_logger().info(f"Translation: {self.fa.get_pose().translation}")
         # move down
         self.get_logger().info("Moving Down...")
         curr_z = self.fa.get_pose().translation[2]
         pose_traj, dt, T = pickup_traj(destination_x, destination_y, curr_z, destination_z)
         self.execute_pose_trajectory(pose_traj, dt, T)
+        #self.get_logger().info(f"Desired Translation: {pose_traj[-1].translation}")
+
         enable_req = Trigger.Request()
+        #self.get_logger().info(f"translation: {self.fa.get_pose().translation}")
 
         self.future = self._enable_vacuum_client.call_async(enable_req)
         rclpy.spin_until_future_complete(self, self.future)
@@ -355,9 +412,18 @@ class ManipulationActionServerNode(Node):
         pose_traj, dt, T = pickup_traj(destination_x, destination_y, curr_z, self.pre_grasp_height)
         self.execute_pose_trajectory(pose_traj, dt, T)
 
+        # move to pre-grasp pose
+        self.fa.goto_joints(pre_grasp_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
+        self.wait_for_skill_with_collision_check()
+
     def execute_pickup_callback(self, goal_handle):
         success = False
         result = Pickup.Result()
+        if not self.arm_enabled:
+            goal_handle.abort()
+            self.get_logger().error("Arm Disabled")
+            return result
+        
         ingredient_type = goal_handle.request.ingredient_type # TODO: Integrate this if need seperate pickup techniques
 
         try:
@@ -398,6 +464,10 @@ class ManipulationActionServerNode(Node):
     def execute_place_callback(self, goal_handle):
         success = False
         result = Place.Result()
+        if not self.arm_enabled:
+            goal_handle.abort()
+            self.get_logger().error("Arm Disabled")
+            return result
         try:
             destination_x = goal_handle.request.x
             destination_y = goal_handle.request.y
@@ -407,7 +477,7 @@ class ManipulationActionServerNode(Node):
                 self.execute_place_sliced((destination_x, destination_y, destination_z))
                 success=True
             elif ingredient_type == 2:
-                #TODO call function for bread placement maneuver
+                #TODO call function for condiment placement maneuver
                 success = False
             elif ingredient_type == 3:
                 #TODO call function for shredded ingredient placement maneuver
@@ -454,21 +524,21 @@ class ManipulationActionServerNode(Node):
         '''
 
         self.fa.wait_for_skill()
-        check_pose = self.fa.get_pose()
+        check_joints = get_pre_place_pickup_joints(self.share_directory, self.current_location)
         self.get_logger().info("Executing Sliced Ingredient Place maneuver...")
         destination_x, destination_y, destination_z = place_point
+        destination_z += self.end_effector_offset
         default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
 
-        # move to x, y, (z + 0.05)
+        # move to x, y, (z + 0.02)
         new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
-        new_pose.translation = [destination_x, destination_y, destination_z+0.05]
+        new_pose.translation = [destination_x, destination_y, destination_z + 0.01]
         new_pose.rotation = default_rotation
         self.fa.goto_pose(new_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=False, block=False) # TODO Change impedances?
         self.get_logger().info("Moving above release point...")
         self.wait_for_skill_with_collision_check()
-        self.validate_execution(new_pose)
 
-        
+
         # disable vacuum
         disable_req = Trigger.Request()
         self.future = self._disable_vacuum_client.call_async(disable_req)
@@ -482,17 +552,14 @@ class ManipulationActionServerNode(Node):
 
         #TODO add go to pre-place position and execute collision check
         self.get_logger().info("Moving back to check position...")
-        self.fa.goto_pose(check_pose, cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, use_impedance=False, block=False)
+        self.fa.goto_joints(check_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
         self.wait_for_skill_with_collision_check()
-        self.validate_execution(check_pose)
-
 
 
     def reset_arm(self):
         try:
             self.fa.reset_joints(block=False)
             self.wait_for_skill_with_collision_check()
-            self.validate_execution(desired_joints=FC.HOME_JOINTS, use_joints=True)
         except:
             return False
         finally:
@@ -500,6 +567,11 @@ class ManipulationActionServerNode(Node):
             return True
 
     def execute_rth_callback(self, goal_handle):
+        if not self.arm_enabled:
+            goal_handle.abort()
+            self.get_logger().error("Arm Disabled")
+            return ReturnHome.Result()
+
         success = True
         if self.current_location == 'home':
             success = self.reset_arm()
