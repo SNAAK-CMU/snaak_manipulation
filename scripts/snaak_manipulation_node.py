@@ -106,7 +106,7 @@ class ManipulationActionServerNode(Node):
             'bin3': self.get_parameter('bin_end_effector_offsets.bin3').value,
         }
         self.assembly_end_effector_offset = self.get_parameter('assembly_end_effector_offset').value
-        self.gamma = 0.5
+        self.gamma = 0.2
 
     def tf_listener_callback_tf(self, msg):
         """Handle incoming transform messages."""
