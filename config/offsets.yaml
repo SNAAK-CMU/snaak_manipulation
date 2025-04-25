@@ -1,0 +1,7 @@
+snaak_manipulation:
+  ros__parameters:
+    assembly_end_effector_offset: -0.02296472280184871
+    bin_end_effector_offsets:
+      bin1: -0.00584289202330734
+      bin2: -0.012146567315156233
+      bin3: -0.019902626605432686
