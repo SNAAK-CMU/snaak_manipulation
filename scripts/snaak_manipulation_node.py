@@ -8,7 +8,7 @@ from frankapy.proto import JointPositionSensorMessage, ShouldTerminateSensorMess
 import rclpy
 from rclpy.action import ActionServer
 from rclpy.node import Node
-from snaak_manipulation.action import ExecuteTrajectory, Pickup, ReturnHome, Place
+from snaak_manipulation.action import ExecuteTrajectory, Pickup, ReturnHome, Place, ExecutePolicy
 
 from std_srvs.srv import Trigger
 from ament_index_python.packages import get_package_share_directory
@@ -17,7 +17,7 @@ import tf_transformations
 from autolab_core import RigidTransform
 from example_interfaces.srv import SetBool
 import asyncio
-from scripts.snaak_manipulation_utils import pickup_traj, get_traj_file, get_pre_place_pickup_joints, save_offsets_to_yaml
+from scripts.snaak_manipulation_utils import pickup_traj, get_traj_file, get_pre_place_pickup_joints, save_offsets_to_yaml, get_bin_offset
 import sys
 from tf2_msgs.msg import TFMessage
 import copy
@@ -74,6 +74,13 @@ class ManipulationActionServerNode(Node):
             'snaak_manipulation/return_home',
             self.execute_rth_callback
         )
+        self._exectute_policy_action_server = ActionServer(
+            self,
+            ExecutePolicy,
+            'snaak_manipulation/execute_policy',
+            self.execute_policy_callback
+        )
+
 
         self.subscription_tf = self.create_subscription(
             TFMessage, "/tf", self.tf_listener_callback_tf, 10
@@ -85,6 +92,7 @@ class ManipulationActionServerNode(Node):
         self._disable_vacuum_client = self.create_client(Trigger, '/snaak_pneumatic/disable_vacuum')
         self._enable_vacuum_client = self.create_client(Trigger, '/snaak_pneumatic/enable_vacuum')
         self._eject_vacuum_client = self.create_client(SetBool, '/snaak_pneumatic/eject_vacuum')
+        self._enable_gripper_client = self.create_client(Trigger, '/snaak_pneumatic/enable_gripper')
 
         self.wait_for_service_clients()
 
@@ -184,6 +192,85 @@ class ManipulationActionServerNode(Node):
         response.success = True
         response.message = "Arm disabled"
         return response
+    
+    
+    def execute_policy_callback(self, goal_handle):
+        if not self.arm_enabled:
+            goal_handle.abort()
+            self.get_logger().error("Arm Disabled")
+            return ExecutePolicy.Result()       
+        
+        # TODO: set tool offset for the soft-gripper
+        self.fa.set_tool_delta_pose(RigidTransform(rotation=np.eye(3), translation=np.array([0, 0, -5]))) # 5 cm down on Z axis of base frame
+        
+        # get things from request
+        actions = goal_handle.request.actions
+        a1 = actions[:3]
+        a2 = actions[3:]
+        bin_id = goal_handle.request.bin_id
+        bin_location = f"bin{bin_id}"
+
+        # Add offset of bin center from arm base to the a1 and a2
+        bin_offset = bin_offset(bin_id)
+        a1 += bin_offset
+        a2 += bin_offset 
+
+        # setup result
+        success = False
+        
+        # execute action followed by grasp and move back to pre-grasp position
+        try:
+            #first go to pre-grasp position for the bin
+            if self.current_location != bin_location:
+                self.get_logger().info(f"Moving to pre-grasp position for {bin_location}")
+                traj_file_path = get_traj_file(self.share_directory, self.current_location, bin_location)
+                
+                if traj_file_path is None:
+                    self.get_logger().error("Invalid Trajectory")
+                    goal_handle.abort()
+                self.get_logger().info('Executing Trajectory...')
+                self.execute_joint_trajectory(traj_file_path)
+                self.current_location = bin_location
+            self.get_logger().info(f"At pre-grasp position for {bin_location}")
+            pre_grasp_joints = get_pre_place_pickup_joints(self.share_directory, self.current_location)
+
+            # execute actions as a pose trajectory
+            current_pose = self.fa.get_pose()
+            pose_trajectory = []
+            rotation = current_pose.rotation # get rotation and keep it constant
+            pose_trajectory.append(current_pose) # add current pose to the trajectory (redundancy)
+
+            # add intermediate point to pose trajectory
+            a1_pose = RigidTransform(rotation=rotation, translation=a1,  from_frame='franka_tool', to_frame='world')
+            pose_trajectory.append(a1_pose)
+
+            # add grasp point to pose trajectory
+            a2_pose = RigidTransform(rotation=rotation, translation=a2,  from_frame='franka_tool', to_frame='world')
+            pose_trajectory.append(a2_pose)
+
+            dt = 0.01
+            T = 2.00 # 2 seconds to execute action
+
+            self.execute_pose_trajectory(pose_traj=pose_trajectory, dt=dt, T=T)
+
+            # execute grasp
+            self.future = self._enable_gripper_client.call_async(Trigger.request())
+            rclpy.spin_until_future_complete(self, self.future)
+            time.sleep(2)
+
+            # go back to pre-grasp 
+            self.fa.goto_joints(pre_grasp_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
+            self.wait_for_skill_with_collision_check()
+
+            success=True
+        except Exception as E:
+            import traceback
+            self.get_logger().error(f"Error while executing policy action: {E} ; {traceback.print_stack(E)}")
+            success = False
+        finally:
+            if success:
+                goal_handle.succeed
+
 
     def execute_joint_trajectory(self, traj_file_path):
         with open(traj_file_path, 'rb') as pkl_f:

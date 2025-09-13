@@ -1,11 +1,17 @@
 import numpy as np
 from scipy.integrate import cumtrapz
 from autolab_core import RigidTransform
-from scripts.snaak_manipulation_constants import TRAJECTORY_FILE_MAP, TRAJECTORY_ID_MAP
+from scripts.snaak_manipulation_constants import TRAJECTORY_FILE_MAP, TRAJECTORY_ID_MAP, BIN_OFFSETS
 import os
 import pickle
 import yaml
 from ament_index_python.packages import get_package_share_directory
+
+def get_bin_offset(bin_id):
+    '''
+    Return XYZ offset from arm origin to center of bin
+    '''
+    return BIN_OFFSETS[bin_id]
 
 
 def pickup_traj(x, y, start_z, end_z, step_size=0.001, acceleration = 0.1):
