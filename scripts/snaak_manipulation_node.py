@@ -8,7 +8,7 @@ from frankapy.proto import JointPositionSensorMessage, ShouldTerminateSensorMess
 import rclpy
 from rclpy.action import ActionServer
 from rclpy.node import Node
-from snaak_manipulation.action import ExecuteTrajectory, Pickup, ReturnHome, Place, ExecutePolicy
+from snaak_manipulation.action import ExecuteTrajectory, Pickup, ReturnHome, Place, ExecutePolicy, PlaceInBin
 
 from std_srvs.srv import Trigger
 from ament_index_python.packages import get_package_share_directory
@@ -79,6 +79,12 @@ class ManipulationActionServerNode(Node):
             ExecutePolicy,
             'snaak_manipulation/execute_policy',
             self.execute_policy_callback
+        )
+        self._execute_place_in_bin = ActionServer(
+            self,
+            PlaceInBin,
+            'snaak_manipulation/place_in_bin',
+            self.execute_place_in_bin_callback
         )
 
 
@@ -234,11 +240,15 @@ class ManipulationActionServerNode(Node):
             self.get_logger().info(f"At pre-grasp position for {bin_location}")
             pre_grasp_joints = get_pre_place_pickup_joints(self.share_directory, self.current_location)
 
-            # execute actions as a pose trajectory
-            current_pose = self.fa.get_pose()
+            # execute actions as a pose trajectory - TODO: should we add some interpolated poses for some more control?
             pose_trajectory = []
-            rotation = current_pose.rotation # get rotation and keep it constant
-            pose_trajectory.append(current_pose) # add current pose to the trajectory (redundancy)
+            current_pose = self.fa.get_pose()
+
+            # get rotation and keep it constant
+            rotation = current_pose.rotation 
+
+            # add current pose to the trajectory (redundancy)
+            pose_trajectory.append(current_pose) 
 
             # add intermediate point to pose trajectory
             a1_pose = RigidTransform(rotation=rotation, translation=a1,  from_frame='franka_tool', to_frame='world')
@@ -261,6 +271,8 @@ class ManipulationActionServerNode(Node):
             # go back to pre-grasp 
             self.fa.goto_joints(pre_grasp_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
             self.wait_for_skill_with_collision_check()
+
+            self.current_location = bin_location
 
             success=True
         except Exception as E:
@@ -328,7 +340,6 @@ class ManipulationActionServerNode(Node):
             self.collision_detected = False
             raise Exception("In Collision with boxes, cancelling motion")
         
-
     def execute_trajectory_callback(self, goal_handle):
         if not self.arm_enabled:
             goal_handle.abort()
@@ -383,7 +394,6 @@ class ManipulationActionServerNode(Node):
             result.end_pose = transform
             return result
         
-
     def execute_pose_trajectory(self, pose_traj, dt, T, at_start=True, verbose=False):
         '''
         Follow a pose trajectory based on a list of rigid transforms
@@ -519,7 +529,6 @@ class ManipulationActionServerNode(Node):
         else:
             e = max(e, -0.02)
         self.bin_end_effector_offsets[f"bin{bin_id}"] += self.gamma * e # lower z than desired should cause negative val
-
 
     def execute_pickup_callback(self, goal_handle):
         success = False
@@ -667,7 +676,67 @@ class ManipulationActionServerNode(Node):
         else:
             e = max(e, -0.02)   
         self.assembly_end_effector_offset += self.gamma * e 
+    
+    def execute_place_in_bin_callback(self, goal_handle):
+        '''
+        Place currently grasped ingredient in target bin and return to current position
 
+        '''
+        try:
+            self.fa.wait_for_skill()
+            dest_bin_id = goal_handle.request.bin_id
+            self.get_logget().info(f"Arm is at {self.current_location}, requested ingredients to be placed in bin{dest_bin_id}")
+            
+            start_joints = get_pre_place_pickup_joints(self.share_directory, self.current_location)
+            start_location = self.current_location
+
+            # make a trajectory to go to an intermediate pose above the current pose and target bin origin, then go down to target bin origin
+            pose_traj = []
+            current_pose = self.fa.get_pose()
+
+            # get rotation and keep it constant
+            rotation = current_pose.rotation
+
+            # add current pose to trajectory (redundancy)
+            pose_traj.append(current_pose)
+
+            # add intermediate pose
+            current_xyz = current_pose.translation
+            target_xyz = get_bin_offset(dest_bin_id)
+            inter_x = (current_xyz[0] + target_xyz[0])/2
+            inter_y = (current_xyz[1] + target_xyz[1])/2
+            inter_z = 5.0
+            inter_pose = RigidTransform(rotation=rotation, translation=np.array([inter_x, inter_y, inter_z]), from_frame='franka_tool', to_frame='world')
+            pose_traj.append(inter_pose)
+
+            # add the target xyz as pose
+            target_pose = RigidTransform(rotation=rotation, translation=np.array(target_xyz), from_frame='franka_tool', to_frame='world')
+            pose_traj.append(target_pose)
+
+            # execute the pose trajectory
+            dt = 0.01
+            T = 2.00 # 2 seconds to execute action
+
+            self.execute_pose_trajectory(pose_traj=pose_traj, dt=dt, T=T)
+
+            # disable vacuum
+            self.future = self._disable_vacuum_client.call_async(Trigger.request())
+            rclpy.spin_until_future_complete(self, self.future)
+            time.sleep(2)
+
+            # go back to where we started - execute pose trajectory in reverse
+            rev_pose_traj = pose_traj[::-1]
+            self.execute_pose_trajectory(pose_traj=pose_traj, dt=dt, T=T)
+            # redundancy - go to the same joints we started from
+            self.fa.goto_joints(start_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
+            self.current_location = start_location
+        except Exception as E:
+            import traceback
+            self.get_logger().error(f"Error while executing  place in bin: {E} ; {traceback.print_stack(E)}")
+            success = False
+        finally:
+            if success:
+                goal_handle.succeed
 
     def reset_arm(self):
         try:
