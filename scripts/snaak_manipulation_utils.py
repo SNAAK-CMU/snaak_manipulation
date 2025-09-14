@@ -99,7 +99,7 @@ def get_pre_place_pickup_joints(package_share_directory, location):
     joints = skill_state_dict['q'][0]
     return joints
 
-def get_traj_file(package_share_directory, curr_location, end_location):
+def get_traj_file(package_share_directory, curr_location, end_location="home"):
     '''
     Returns the trajectory pkl file based on the current and desired end location
 
@@ -112,6 +112,7 @@ def get_traj_file(package_share_directory, curr_location, end_location):
         traj_file_path: complete file path to .pkl file
     '''
     pkl_file_name = None
+
     traj_id = TRAJECTORY_ID_MAP[curr_location][end_location]
     if traj_id in TRAJECTORY_FILE_MAP:
         pkl_file_name = TRAJECTORY_FILE_MAP[traj_id]
@@ -129,6 +130,7 @@ def save_offsets_to_yaml(bin_offsets, assembly_offset):
     config_file = os.path.expanduser(
         '~/Documents/manipulation_ws/src/snaak_manipulation/config/offsets.yaml'
     )
+    
 
 # Convert the dictionaries to ensure float values
     bin_offset_float = convert_to_float(bin_offsets)
