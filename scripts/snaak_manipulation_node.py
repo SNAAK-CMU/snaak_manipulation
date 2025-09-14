@@ -198,8 +198,7 @@ class ManipulationActionServerNode(Node):
         response.success = True
         response.message = "Arm disabled"
         return response
-    
-    
+
     def execute_policy_callback(self, goal_handle):
         if not self.arm_enabled:
             goal_handle.abort()
@@ -217,7 +216,7 @@ class ManipulationActionServerNode(Node):
         bin_location = f"bin{bin_id}"
 
         # Add offset of bin center from arm base to the a1 and a2
-        bin_offset = bin_offset(bin_id)
+        bin_offset = get_bin_offset(bin_id)
         a1 += bin_offset
         a2 += bin_offset 
 
@@ -277,12 +276,12 @@ class ManipulationActionServerNode(Node):
             success=True
         except Exception as E:
             import traceback
-            self.get_logger().error(f"Error while executing policy action: {E} ; {traceback.print_stack(E)}")
+            print(E)
+            self.get_logger().error(f"Error while executing  policy: {E} ; {traceback.print_stack(E)}")
             success = False
         finally:
             if success:
                 goal_handle.succeed
-
 
     def execute_joint_trajectory(self, traj_file_path):
         with open(traj_file_path, 'rb') as pkl_f:
@@ -682,6 +681,7 @@ class ManipulationActionServerNode(Node):
         Place currently grasped ingredient in target bin and return to current position
 
         '''
+        success = False
         try:
             self.fa.wait_for_skill()
             dest_bin_id = goal_handle.request.bin_id
@@ -689,7 +689,12 @@ class ManipulationActionServerNode(Node):
             
             start_joints = get_pre_place_pickup_joints(self.share_directory, self.current_location)
             start_location = self.current_location
-
+            
+            # go to target bin pre-grasp pose #TODO: add collision checking to goto_joints() function in FrankaPy
+            pre_grasp_joints = get_pre_place_pickup_joints(self.share_directory, f"bin{dest_bin_id}")
+            self.fa.goto_joints(pre_grasp_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
+            self.wait_for_skill_with_collision_check()
+            self.current_location = f"bin{dest_bin_id}"
             # make a trajectory to go to an intermediate pose above the current pose and target bin origin, then go down to target bin origin
             pose_traj = []
             current_pose = self.fa.get_pose()
@@ -700,14 +705,14 @@ class ManipulationActionServerNode(Node):
             # add current pose to trajectory (redundancy)
             pose_traj.append(current_pose)
 
-            # add intermediate pose
-            current_xyz = current_pose.translation
+            # add intermediate pose between current and target
+            # current_xyz = current_pose.translation
             target_xyz = get_bin_offset(dest_bin_id)
-            inter_x = (current_xyz[0] + target_xyz[0])/2
-            inter_y = (current_xyz[1] + target_xyz[1])/2
-            inter_z = 5.0
-            inter_pose = RigidTransform(rotation=rotation, translation=np.array([inter_x, inter_y, inter_z]), from_frame='franka_tool', to_frame='world')
-            pose_traj.append(inter_pose)
+            # inter_x = (current_xyz[0] + target_xyz[0])/2
+            # inter_y = (current_xyz[1] + target_xyz[1])/2
+            # inter_z = 5.0
+            # inter_pose = RigidTransform(rotation=rotation, translation=np.array([inter_x, inter_y, inter_z]), from_frame='franka_tool', to_frame='world')
+            # pose_traj.append(inter_pose)
 
             # add the target xyz as pose
             target_pose = RigidTransform(rotation=rotation, translation=np.array(target_xyz), from_frame='franka_tool', to_frame='world')
@@ -730,6 +735,7 @@ class ManipulationActionServerNode(Node):
             # redundancy - go to the same joints we started from
             self.fa.goto_joints(start_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
             self.current_location = start_location
+            success = True
         except Exception as E:
             import traceback
             self.get_logger().error(f"Error while executing  place in bin: {E} ; {traceback.print_stack(E)}")
@@ -774,6 +780,8 @@ class ManipulationActionServerNode(Node):
             self.current_location = 'home'
             goal_handle.succeed()
             return ReturnHome.Result()
+        
+    
         
 def main(args=None):
     # TODO add proper shutdown with FrankaPy
