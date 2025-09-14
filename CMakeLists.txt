@@ -25,6 +25,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "action/Pickup.action"
   "action/ReturnHome.action"
   "action/Place.action"
+  "action/ExecutePolicy.action"
+  "action/PlaceInBin.action"
   DEPENDENCIES geometry_msgs
 )
 

@@ -206,23 +206,25 @@ class ManipulationActionServerNode(Node):
             return ExecutePolicy.Result()       
         
         # TODO: set tool offset for the soft-gripper
-        self.fa.set_tool_delta_pose(RigidTransform(rotation=np.eye(3), translation=np.array([0, 0, -5]))) # 5 cm down on Z axis of base frame
-        
+        #self.fa.set_tool_delta_pose(RigidTransform(rotation=np.eye(3), translation=np.array([0, 0, -5]))) # 5 cm down on Z axis of base frame
+        self.fa.set_tool_delta_pose(RigidTransform(rotation=np.eye(3), translation=np.array([0, 0, 0]), from_frame='franka_tool', to_frame='franka_tool_base')) # 5 cm down on Z axis of base frame
+
         # get things from request
         actions = goal_handle.request.actions
-        a1 = actions[:3]
-        a2 = actions[3:]
+        a1 = np.array(actions[:3])
+        a2 = np.array(actions[3:])
         bin_id = goal_handle.request.bin_id
         bin_location = f"bin{bin_id}"
 
         # Add offset of bin center from arm base to the a1 and a2
-        bin_offset = get_bin_offset(bin_id)
+        bin_offset = np.array(get_bin_offset(bin_id))
         a1 += bin_offset
         a2 += bin_offset 
 
         # setup result
         success = False
-        
+        default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
+
         # execute action followed by grasp and move back to pre-grasp position
         try:
             #first go to pre-grasp position for the bin
@@ -236,38 +238,41 @@ class ManipulationActionServerNode(Node):
                 self.get_logger().info('Executing Trajectory...')
                 self.execute_joint_trajectory(traj_file_path)
                 self.current_location = bin_location
+
             self.get_logger().info(f"At pre-grasp position for {bin_location}")
             pre_grasp_joints = get_pre_place_pickup_joints(self.share_directory, self.current_location)
 
-            # execute actions as a pose trajectory - TODO: should we add some interpolated poses for some more control?
-            pose_trajectory = []
-            current_pose = self.fa.get_pose()
 
-            # get rotation and keep it constant
-            rotation = current_pose.rotation 
+            # Need to move to point above bin, so that we can move down without hitting the bin walls
+            new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
+            new_pose.translation = [a1[0], a1[1], self.pre_grasp_height]
+            new_pose.rotation = default_rotation
+            self.fa.goto_pose(new_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
+            self.wait_for_skill_with_collision_check()
 
-            # add current pose to the trajectory (redundancy)
-            pose_trajectory.append(current_pose) 
+            # execute policy
+            a1_pose = RigidTransform(rotation=default_rotation, translation=a1,  from_frame='franka_tool', to_frame='world')
+            a2_pose = RigidTransform(rotation=default_rotation, translation=a2,  from_frame='franka_tool', to_frame='world')
 
-            # add intermediate point to pose trajectory
-            a1_pose = RigidTransform(rotation=rotation, translation=a1,  from_frame='franka_tool', to_frame='world')
-            pose_trajectory.append(a1_pose)
+            self.fa.goto_pose(a1_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=False, block=False)
+            self.wait_for_skill_with_collision_check()
 
-            # add grasp point to pose trajectory
-            a2_pose = RigidTransform(rotation=rotation, translation=a2,  from_frame='franka_tool', to_frame='world')
-            pose_trajectory.append(a2_pose)
-
-            dt = 0.01
-            T = 2.00 # 2 seconds to execute action
-
-            self.execute_pose_trajectory(pose_traj=pose_trajectory, dt=dt, T=T)
+            self.fa.goto_pose(a2_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=False, block=False)
+            self.wait_for_skill_with_collision_check()
 
             # execute grasp
-            self.future = self._enable_gripper_client.call_async(Trigger.request())
+            self.future = self._enable_gripper_client.call_async(Trigger.Request())
             rclpy.spin_until_future_complete(self, self.future)
             time.sleep(2)
 
-            # go back to pre-grasp 
+            # move straight up to safe height
+            new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
+            new_pose.translation = [a2[0], a2[1], self.pre_grasp_height]
+            new_pose.rotation = default_rotation
+            self.fa.goto_pose(new_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
+            self.wait_for_skill_with_collision_check()
+
+            # go back to pre-grasp
             self.fa.goto_joints(pre_grasp_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
             self.wait_for_skill_with_collision_check()
 
@@ -278,10 +283,10 @@ class ManipulationActionServerNode(Node):
             import traceback
             print(E)
             self.get_logger().error(f"Error while executing  policy: {E} ; {traceback.print_stack(E)}")
-            success = False
+            goal_handle.abort()
         finally:
             if success:
-                goal_handle.succeed
+                goal_handle.succeed()
 
     def execute_joint_trajectory(self, traj_file_path):
         with open(traj_file_path, 'rb') as pkl_f:
@@ -682,10 +687,14 @@ class ManipulationActionServerNode(Node):
 
         '''
         success = False
+        default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
+        #self.fa.set_tool_delta_pose(RigidTransform(rotation=np.eye(3), translation=np.array([0, 0, -5]))) # 5 cm down on Z axis of base frame
+        self.fa.set_tool_delta_pose(RigidTransform(rotation=np.eye(3), translation=np.array([0, 0, 0]), from_frame='franka_tool', to_frame='franka_tool_base')) # 5 cm down on Z axis of base frame
+
         try:
             self.fa.wait_for_skill()
             dest_bin_id = goal_handle.request.bin_id
-            self.get_logget().info(f"Arm is at {self.current_location}, requested ingredients to be placed in bin{dest_bin_id}")
+            self.get_logger().info(f"Arm is at {self.current_location}, requested ingredients to be placed in bin{dest_bin_id}")
             
             start_joints = get_pre_place_pickup_joints(self.share_directory, self.current_location)
             start_location = self.current_location
@@ -695,54 +704,36 @@ class ManipulationActionServerNode(Node):
             self.fa.goto_joints(pre_grasp_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
             self.wait_for_skill_with_collision_check()
             self.current_location = f"bin{dest_bin_id}"
-            # make a trajectory to go to an intermediate pose above the current pose and target bin origin, then go down to target bin origin
-            pose_traj = []
-            current_pose = self.fa.get_pose()
 
-            # get rotation and keep it constant
-            rotation = current_pose.rotation
-
-            # add current pose to trajectory (redundancy)
-            pose_traj.append(current_pose)
-
-            # add intermediate pose between current and target
-            # current_xyz = current_pose.translation
-            target_xyz = get_bin_offset(dest_bin_id)
-            # inter_x = (current_xyz[0] + target_xyz[0])/2
-            # inter_y = (current_xyz[1] + target_xyz[1])/2
-            # inter_z = 5.0
-            # inter_pose = RigidTransform(rotation=rotation, translation=np.array([inter_x, inter_y, inter_z]), from_frame='franka_tool', to_frame='world')
-            # pose_traj.append(inter_pose)
+            target_xyz = np.array(get_bin_offset(dest_bin_id)) + np.array([0, 0, 0.10])
 
             # add the target xyz as pose
-            target_pose = RigidTransform(rotation=rotation, translation=np.array(target_xyz), from_frame='franka_tool', to_frame='world')
-            pose_traj.append(target_pose)
+            target_pose = RigidTransform(rotation=default_rotation, translation=target_xyz, from_frame='franka_tool', to_frame='world')
 
-            # execute the pose trajectory
-            dt = 0.01
-            T = 2.00 # 2 seconds to execute action
-
-            self.execute_pose_trajectory(pose_traj=pose_traj, dt=dt, T=T)
+            self.fa.goto_pose(target_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=False, block=False)
+            self.wait_for_skill_with_collision_check()
 
             # disable vacuum
-            self.future = self._disable_vacuum_client.call_async(Trigger.request())
+            self.future = self._disable_vacuum_client.call_async(Trigger.Request())
             rclpy.spin_until_future_complete(self, self.future)
             time.sleep(2)
 
-            # go back to where we started - execute pose trajectory in reverse
-            rev_pose_traj = pose_traj[::-1]
-            self.execute_pose_trajectory(pose_traj=pose_traj, dt=dt, T=T)
-            # redundancy - go to the same joints we started from
+            # go back to where we started
+            self.fa.goto_joints(pre_grasp_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
+            self.wait_for_skill_with_collision_check()
+
             self.fa.goto_joints(start_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
+            self.wait_for_skill_with_collision_check()
             self.current_location = start_location
             success = True
+
         except Exception as E:
             import traceback
             self.get_logger().error(f"Error while executing  place in bin: {E} ; {traceback.print_stack(E)}")
-            success = False
+            goal_handle.abort()
         finally:
             if success:
-                goal_handle.succeed
+                goal_handle.succeed()
 
     def reset_arm(self):
         try:
