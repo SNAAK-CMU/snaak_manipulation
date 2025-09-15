@@ -17,14 +17,14 @@ import tf_transformations
 from autolab_core import RigidTransform
 from example_interfaces.srv import SetBool
 import asyncio
-from scripts.snaak_manipulation_utils import pickup_traj, get_traj_file, get_pre_place_pickup_joints, save_offsets_to_yaml, get_bin_offset
+from snaak_manipulation_utils import pickup_traj, get_traj_file, get_pre_place_pickup_joints, save_offsets_to_yaml, get_bin_offset
 import sys
 from tf2_msgs.msg import TFMessage
 import copy
 
 
 
-from scripts.snaak_manipulation_constants import KIOSK_COLLISION_BOXES
+from snaak_manipulation_constants import KIOSK_COLLISION_BOXES
 
 class ManipulationActionServerNode(Node):
     def __init__(self):
@@ -216,14 +216,19 @@ class ManipulationActionServerNode(Node):
         bin_id = goal_handle.request.bin_id
         bin_location = f"bin{bin_id}"
 
+        self.get_logger().info(f"Bin ID: {bin_id}")
+
         # Add offset of bin center from arm base to the a1 and a2
         bin_offset = np.array(get_bin_offset(bin_id))
         a1_max_height = 0.05 + bin_offset[2]
 
+        self.get_logger().info(f"Bin Offset: {bin_offset}")
 
         a1 += bin_offset
         a2 += bin_offset 
 
+        a1[2] += self.bin_end_effector_offsets[f"bin{bin_id}"]
+        a2[2] += self.bin_end_effector_offsets[f"bin{bin_id}"]
         # setup result
         success = False
         default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
@@ -290,6 +295,8 @@ class ManipulationActionServerNode(Node):
         finally:
             if success:
                 goal_handle.succeed()
+            return ExecutePolicy.Result()       
+
 
     def execute_joint_trajectory(self, traj_file_path):
         with open(traj_file_path, 'rb') as pkl_f:
@@ -690,6 +697,11 @@ class ManipulationActionServerNode(Node):
 
         '''
         success = False
+        result = PlaceInBin.Result()
+        if not self.arm_enabled:
+            goal_handle.abort()
+            self.get_logger().error("Arm Disabled")
+            return result
         default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
         #self.fa.set_tool_delta_pose(RigidTransform(rotation=np.eye(3), translation=np.array([0, 0, -5]))) # 5 cm down on Z axis of base frame
         self.fa.set_tool_delta_pose(RigidTransform(rotation=np.eye(3), translation=np.array([0, 0, 0]), from_frame='franka_tool', to_frame='franka_tool_base')) # 5 cm down on Z axis of base frame
@@ -737,6 +749,7 @@ class ManipulationActionServerNode(Node):
         finally:
             if success:
                 goal_handle.succeed()
+            return result
 
     def reset_arm(self):
         try:

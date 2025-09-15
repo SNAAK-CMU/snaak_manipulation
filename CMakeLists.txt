@@ -32,6 +32,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 
 install(PROGRAMS
   scripts/snaak_manipulation_node.py
+  scripts/snaak_manipulation_utils.py
+  scripts/snaak_manipulation_constants.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.integrate import cumtrapz
 from autolab_core import RigidTransform
-from scripts.snaak_manipulation_constants import TRAJECTORY_FILE_MAP, TRAJECTORY_ID_MAP, BIN_OFFSETS
+from snaak_manipulation_constants import TRAJECTORY_FILE_MAP, TRAJECTORY_ID_MAP, BIN_OFFSETS
 import os
 import pickle
 import yaml
