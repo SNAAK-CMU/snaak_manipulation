@@ -205,9 +205,8 @@ class ManipulationActionServerNode(Node):
             self.get_logger().error("Arm Disabled")
             return ExecutePolicy.Result()       
         
-        # TODO: set tool offset for the soft-gripper
-        #self.fa.set_tool_delta_pose(RigidTransform(rotation=np.eye(3), translation=np.array([0, 0, -5]))) # 5 cm down on Z axis of base frame
-        self.fa.set_tool_delta_pose(RigidTransform(rotation=np.eye(3), translation=np.array([0, 0, 0]), from_frame='franka_tool', to_frame='franka_tool_base')) # 5 cm down on Z axis of base frame
+        # TODO: set tool offset for the soft-gripper. Note that offset is relative to hand frame
+        self.fa.set_tool_delta_pose(RigidTransform(rotation=np.eye(3), translation=np.array([0, 0, 0.05]), from_frame='franka_tool', to_frame='franka_tool_base')) # 5 cm down on Z axis of base frame
 
         # get things from request
         actions = goal_handle.request.actions
@@ -703,8 +702,7 @@ class ManipulationActionServerNode(Node):
             self.get_logger().error("Arm Disabled")
             return result
         default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
-        #self.fa.set_tool_delta_pose(RigidTransform(rotation=np.eye(3), translation=np.array([0, 0, -5]))) # 5 cm down on Z axis of base frame
-        self.fa.set_tool_delta_pose(RigidTransform(rotation=np.eye(3), translation=np.array([0, 0, 0]), from_frame='franka_tool', to_frame='franka_tool_base')) # 5 cm down on Z axis of base frame
+        self.fa.set_tool_delta_pose(RigidTransform(rotation=np.eye(3), translation=np.array([0, 0, 0.05]), from_frame='franka_tool', to_frame='franka_tool_base')) # 5 cm down on Z axis of base frame
 
         try:
             self.fa.wait_for_skill()
@@ -720,7 +718,7 @@ class ManipulationActionServerNode(Node):
             self.wait_for_skill_with_collision_check()
             self.current_location = f"bin{dest_bin_id}"
 
-            target_xyz = np.array(get_bin_offset(dest_bin_id)) + np.array([0, 0, 0.10]) # drop from a bit above the bin just to be safe
+            target_xyz = np.array(get_bin_offset(dest_bin_id)) + np.array([0, 0, 0.05]) # drop from a bit above the bin just to be safe
 
             # add the target xyz as pose
             target_pose = RigidTransform(rotation=default_rotation, translation=target_xyz, from_frame='franka_tool', to_frame='world')
