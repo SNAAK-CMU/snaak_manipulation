@@ -218,6 +218,9 @@ class ManipulationActionServerNode(Node):
 
         # Add offset of bin center from arm base to the a1 and a2
         bin_offset = np.array(get_bin_offset(bin_id))
+        a1_max_height = 0.05 + bin_offset[2]
+
+
         a1 += bin_offset
         a2 += bin_offset 
 
@@ -245,7 +248,7 @@ class ManipulationActionServerNode(Node):
 
             # Need to move to point above bin, so that we can move down without hitting the bin walls
             new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
-            new_pose.translation = [a1[0], a1[1], self.pre_grasp_height]
+            new_pose.translation = [a1[0], a1[1], a1_max_height] # go to top of a1 range
             new_pose.rotation = default_rotation
             self.fa.goto_pose(new_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
             self.wait_for_skill_with_collision_check()
@@ -705,7 +708,7 @@ class ManipulationActionServerNode(Node):
             self.wait_for_skill_with_collision_check()
             self.current_location = f"bin{dest_bin_id}"
 
-            target_xyz = np.array(get_bin_offset(dest_bin_id)) + np.array([0, 0, 0.10])
+            target_xyz = np.array(get_bin_offset(dest_bin_id)) + np.array([0, 0, 0.10]) # drop from a bit above the bin just to be safe
 
             # add the target xyz as pose
             target_pose = RigidTransform(rotation=default_rotation, translation=target_xyz, from_frame='franka_tool', to_frame='world')
