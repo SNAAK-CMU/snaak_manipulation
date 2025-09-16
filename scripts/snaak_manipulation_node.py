@@ -21,7 +21,7 @@ from snaak_manipulation_utils import pickup_traj, get_traj_file, get_pre_place_p
 import sys
 from tf2_msgs.msg import TFMessage
 import copy
-
+from std_msgs.msg import String
 
 
 from snaak_manipulation_constants import KIOSK_COLLISION_BOXES
@@ -87,6 +87,7 @@ class ManipulationActionServerNode(Node):
             self.execute_place_in_bin_callback
         )
 
+        self._data_collection_state_publisher = self.create_publisher(String, 'snaak_manipulation/data_collection_state', 10)
 
         self.subscription_tf = self.create_subscription(
             TFMessage, "/tf", self.tf_listener_callback_tf, 10
@@ -245,7 +246,7 @@ class ManipulationActionServerNode(Node):
                 self.get_logger().info('Executing Trajectory...')
                 self.execute_joint_trajectory(traj_file_path)
                 self.current_location = bin_location
-
+            self._data_collection_state_publisher.publish(String(data=f"Pre-Grasp Position {bin_location}"))
             self.get_logger().info(f"At pre-grasp position for {bin_location}")
             pre_grasp_joints = get_pre_place_pickup_joints(self.share_directory, self.current_location)
 
@@ -263,9 +264,13 @@ class ManipulationActionServerNode(Node):
 
             self.fa.goto_pose(a1_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=False, block=False)
             self.wait_for_skill_with_collision_check()
+            self._data_collection_state_publisher.publish(String(data=f"A1"))
+
 
             self.fa.goto_pose(a2_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=False, block=False)
             self.wait_for_skill_with_collision_check()
+            self._data_collection_state_publisher.publish(String(data=f"A2"))
+
 
             # execute grasp
             self.future = self._enable_gripper_client.call_async(Trigger.Request())
@@ -282,6 +287,7 @@ class ManipulationActionServerNode(Node):
             # go back to pre-grasp
             self.fa.goto_joints(pre_grasp_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
             self.wait_for_skill_with_collision_check()
+            self._data_collection_state_publisher.publish(String(data=f"Post-Grasp Position {bin_location}"))
 
             self.current_location = bin_location
 
