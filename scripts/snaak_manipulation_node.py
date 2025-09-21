@@ -302,7 +302,6 @@ class ManipulationActionServerNode(Node):
                 goal_handle.succeed()
             return ExecutePolicy.Result()       
 
-
     def execute_joint_trajectory(self, traj_file_path):
         with open(traj_file_path, 'rb') as pkl_f:
             skill_data = pickle.load(pkl_f)
@@ -346,7 +345,7 @@ class ManipulationActionServerNode(Node):
 
             self.fa.publish_sensor_data(ros_msg)
             time.sleep(dt)
-    
+        time.sleep(1.0) # without this the arm is unable to finish the trajectories. Probably because dt here < dt while recording
         term_proto_msg = ShouldTerminateSensorMessage(timestamp=self.fa.get_time() - init_time, should_terminate=True)
         ros_msg = make_sensor_group_msg(
             termination_handler_sensor_msg=sensor_proto2ros_msg(
@@ -355,6 +354,7 @@ class ManipulationActionServerNode(Node):
         self.fa.publish_sensor_data(ros_msg)
         self.fa.wait_for_skill()
         collision_task.cancel()
+        # self.fa.goto_joints(joints_traj[-1], joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, duration=0.5, dynamic=False, buffer_time=1) # redundancy
         if self.collision_detected:
             self.collision_detected = False
             raise Exception("In Collision with boxes, cancelling motion")
