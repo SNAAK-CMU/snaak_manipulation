@@ -15,15 +15,30 @@ TRAJECTORY_FILE_MAP = {
     11: 'assembly2home_verified.pkl',
     12: 'assembly2bin1_verified.pkl',
     13: 'assembly2bin2_verified.pkl',
-    14: 'assembly2bin3_verified.pkl'
+    14: 'assembly2bin3_verified.pkl',
+    15: 'assembly2bin4_verified.pkl',
+    16: 'assembly2bin5_verified.pkl',
+    17: 'assembly2bin6_verified.pkl',
+    18: 'home2bin4_verified.pkl',
+    19: 'home2bin5_verified.pkl',
+    20: 'home2bin6_verified.pkl',
+    21: 'bin42home_verified.pkl',
+    22: 'bin42assembly_verified.pkl',
+    23: 'bin52home_verified.pkl',
+    24: 'bin52assembly_verified.pkl',
+    25: 'bin62home_verified.pkl',
+    26: 'bin62assembly_verified.pkl',
 }
 
 TRAJECTORY_ID_MAP = {
-    'home': {'bin1': 1, 'bin2': 2, 'bin3': 3, 'assembly': 4},
+    'home': {'bin1': 1, 'bin2': 2, 'bin3': 3, 'assembly': 4, 'bin4': 18, 'bin5': 19, 'bin6':20},
     'bin1': {'home': 5, 'assembly': 6},
     'bin2': {'home': 7, 'assembly': 8},
     'bin3': {'home': 9, 'assembly': 10},
-    'assembly': {'home': 11, 'bin1': 12, 'bin2': 13, 'bin3': 14}
+    'bin4': {'home': 21, 'assembly': 22},
+    'bin5': {'home': 23, 'assembly': 24},
+    'bin6': {'home': 25, 'assembly': 26},
+    'assembly': {'home': 11, 'bin1': 12, 'bin2': 13, 'bin3': 14, 'bin4': 15, 'bin5': 16, 'bin6': 17}
 }
 
 KIOSK_COLLISION_BOXES = np.array([
@@ -46,8 +61,8 @@ KIOSK_COLLISION_BOXES = np.array([
 
 BIN_OFFSETS = {1: [0.64, -0.37, 0.27], 
                2: [0.45, -0.37, 0.27],
-               3: [0.23, -0.37, 0.27],
-               4: [0.23, 0.34, 0.27],
+               3: [0.27, -0.37, 0.27],
+               4: [0.27, 0.34, 0.27],
                5: [0.45, 0.34, 0.27],
                6: [0.64, 0.34, 0.27]              
                }
