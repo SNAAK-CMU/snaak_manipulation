@@ -3,7 +3,7 @@ float32 y
 float32 z
 
 int32 ingredient_type
-
+int32 bin_id
 ---
 geometry_msgs/Transform end_pose
 ---

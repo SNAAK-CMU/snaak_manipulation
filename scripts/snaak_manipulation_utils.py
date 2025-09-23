@@ -4,6 +4,9 @@ from autolab_core import RigidTransform
 from scripts.snaak_manipulation_constants import TRAJECTORY_FILE_MAP, TRAJECTORY_ID_MAP
 import os
 import pickle
+import yaml
+from ament_index_python.packages import get_package_share_directory
+
 
 def pickup_traj(x, y, start_z, end_z, step_size=0.001, acceleration = 0.1):
     '''
@@ -111,3 +114,27 @@ def get_traj_file(package_share_directory, curr_location, end_location):
     
     traj_file_path = os.path.join(package_share_directory, pkl_file_name)
     return traj_file_path
+
+
+def convert_to_float(d):
+    return {key: float(value) for key, value in d.items()}
+
+def save_offsets_to_yaml(bin_offsets, assembly_offset):
+    config_file = os.path.expanduser(
+        '~/Documents/manipulation_ws/src/snaak_manipulation/config/offsets.yaml'
+    )
+
+# Convert the dictionaries to ensure float values
+    bin_offset_float = convert_to_float(bin_offsets)
+
+    # Updated config dictionary with float values
+    updated_config = {
+        'snaak_manipulation': {
+            'ros__parameters': {
+                'bin_end_effector_offsets': bin_offset_float,  # converted to float
+                'assembly_end_effector_offset': float(assembly_offset)  # converted to float
+            }
+        }
+    }
+    with open(config_file, 'w') as f:
+        yaml.dump(updated_config, f)
