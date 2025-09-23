@@ -40,7 +40,6 @@ install(PROGRAMS
 install(DIRECTORY
   launch
   config
-  ${CMAKE_SOURCE_DIR}/share/${PROJECT_NAME}/
   DESTINATION share/${PROJECT_NAME}/
 )
 

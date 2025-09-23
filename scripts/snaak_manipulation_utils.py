@@ -1,11 +1,23 @@
 import numpy as np
 from scipy.integrate import cumtrapz
 from autolab_core import RigidTransform
-from snaak_manipulation_constants import TRAJECTORY_FILE_MAP, TRAJECTORY_ID_MAP, BIN_OFFSETS
+from snaak_manipulation_constants import JOINTS_MAP, BIN_OFFSETS
 import os
-import pickle
 import yaml
 from ament_index_python.packages import get_package_share_directory
+from frankapy import utils
+
+def get_traj(q1, q2, dt=0.01, T=5.0):
+    '''
+    Generates a joint trajectory from q1 to q2 using a minimum jerk profile.
+    '''
+    ts = np.arange(0, T, dt)
+    q1 = np.array(q1)
+    q2 = np.array(q2)
+    joints_traj = [utils.min_jerk(q1, q2, t, T) for t in ts]
+    return joints_traj, T, dt
+        
+        
 
 def get_bin_offset(bin_id):
     '''
@@ -82,46 +94,15 @@ def pickup_traj(x, y, start_z, end_z, step_size=0.001, acceleration = 0.1):
     T = len(pose_traj) * dt
     return pose_traj, dt, T
 
-def get_pre_place_pickup_joints(package_share_directory, location):
+def get_joints(location):
     """
     Function to get the joint angles that correspond to the pre-pickup or pre-place position
     """
-    traj_file_path = get_traj_file(package_share_directory, location, "home")
-    if traj_file_path is None:
+    if location not in JOINTS_MAP:
         raise Exception("Invalid location provided...")
-    with open(traj_file_path, 'rb') as pkl_f:
-        skill_data = pickle.load(pkl_f)
-
-    assert skill_data[0]['skill_description'] == 'GuideMode', \
-        "Trajectory not collected in guide mode"
-    skill_state_dict = skill_data[0]['skill_state_dict']
-
-    joints = skill_state_dict['q'][0]
-    return joints
-
-def get_traj_file(package_share_directory, curr_location, end_location="home"):
-    '''
-    Returns the trajectory pkl file based on the current and desired end location
-
-    Inputs:
-        package_share_directory: location of share directory
-        curr_location: current arm location
-        end_location: desired end location
-    
-    Outputs:
-        traj_file_path: complete file path to .pkl file
-    '''
-    pkl_file_name = None
-
-    traj_id = TRAJECTORY_ID_MAP[curr_location][end_location]
-    if traj_id in TRAJECTORY_FILE_MAP:
-        pkl_file_name = TRAJECTORY_FILE_MAP[traj_id]
-    else:
-        return None
-    
-    traj_file_path = os.path.join(package_share_directory, pkl_file_name)
-    return traj_file_path
-
+    desired_joints = JOINTS_MAP[location]
+    desired_joints = np.array(desired_joints)
+    return desired_joints
 
 def convert_to_float(d):
     return {key: float(value) for key, value in d.items()}
