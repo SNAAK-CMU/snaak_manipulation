@@ -269,16 +269,16 @@ class ManipulationActionServerNode(Node):
             new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
             new_pose.translation = [a1[0], a1[1], a1_max_height] # go to top of a1 range
             new_pose.rotation = default_rotation
-            self.fa.goto_pose(new_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=True)
+            self.fa.goto_pose(new_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES)#, use_impedance=True, block=True)
 
             # execute policy
             a1_pose = RigidTransform(rotation=default_rotation, translation=a1,  from_frame='franka_tool', to_frame='world')
             a2_pose = RigidTransform(rotation=default_rotation, translation=a2,  from_frame='franka_tool', to_frame='world')
 
-            self.fa.goto_pose(a1_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=False, block=True)
+            self.fa.goto_pose(a1_pose, cartesian_impedances=self.pickup_place_impedances)#, use_impedance=True, block=True)
             self._data_collection_state_publisher.publish(String(data=f"A1"))
 
-            self.fa.goto_pose(a2_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=False, block=True)
+            self.fa.goto_pose(a2_pose, cartesian_impedances=self.pickup_place_impedances)#, use_impedance=True, block=True)
             self._data_collection_state_publisher.publish(String(data=f"A2"))
 
             # execute grasp
@@ -290,7 +290,7 @@ class ManipulationActionServerNode(Node):
             new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
             new_pose.translation = [a2[0], a2[1], self.pre_grasp_height]
             new_pose.rotation = default_rotation
-            self.fa.goto_pose(new_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=True)
+            self.fa.goto_pose(new_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES)#, use_impedance=True, block=True)
 
             # go back to pre-grasp
             start_joints = self.fa.get_joints()
@@ -367,53 +367,53 @@ class ManipulationActionServerNode(Node):
         desired_end_location = goal_handle.request.desired_location
         result = ExecuteTrajectory.Result()
         success = False
-        # try:
-        if self.current_location != desired_end_location:
-            desired_joints = get_joints(desired_end_location)
-            start_joints = self.fa.get_joints()
-            joints_traj, T, dt = get_traj(start_joints, desired_joints, dt=0.005, T=3.0)
-            for q in joints_traj:
-                if self.fa.is_joints_in_collision_with_boxes(q, boxes=KIOSK_COLLISION_BOXES):
-                    self.get_logger().error("Collision in Trajectory")
-                    goal_handle.abort()
-                    return result
+        try:
+            if self.current_location != desired_end_location:
+                desired_joints = get_joints(desired_end_location)
+                start_joints = self.fa.get_joints()
+                joints_traj, T, dt = get_traj(start_joints, desired_joints, dt=0.005, T=3.0)
+                for q in joints_traj:
+                    if self.fa.is_joints_in_collision_with_boxes(q, boxes=KIOSK_COLLISION_BOXES):
+                        self.get_logger().error("Collision in Trajectory")
+                        goal_handle.abort()
+                        return result
 
-            self.get_logger().info('Executing Trajectory...')
-            self.execute_joint_trajectory(joints_traj, dt, T)
-            self.current_location = desired_end_location
-            success = True
-        else:
-            self.get_logger().info("Already at desired location")
-            success = True
-        # except Exception as e:
-        #     self.get_logger().error(f"Error Occured during trajectory following {e} ")
-        #     goal_handle.abort()
-        #     raise e
-        # finally:
-        if success:
-            goal_handle.succeed()
-        pose = self.fa.get_pose()
-        transform = Transform()
-        transform.translation = Vector3(
-            x=pose.translation[0],
-            y=pose.translation[1],
-            z=pose.translation[2]
-        )
+                self.get_logger().info('Executing Trajectory...')
+                self.execute_joint_trajectory(joints_traj, dt, T)
+                self.current_location = desired_end_location
+                success = True
+            else:
+                self.get_logger().info("Already at desired location")
+                success = True
+        except Exception as e:
+            self.get_logger().error(f"Error Occured during trajectory following {e} ")
+            goal_handle.abort()
+            raise e
+        finally:
+            if success:
+                goal_handle.succeed()
+            pose = self.fa.get_pose()
+            transform = Transform()
+            transform.translation = Vector3(
+                x=pose.translation[0],
+                y=pose.translation[1],
+                z=pose.translation[2]
+            )
 
-        rotation_matrix = pose.rotation
-        transformation_matrix = np.eye(4)
-        transformation_matrix[:3, :3] = rotation_matrix
+            rotation_matrix = pose.rotation
+            transformation_matrix = np.eye(4)
+            transformation_matrix[:3, :3] = rotation_matrix
 
-        q = tf_transformations.quaternion_from_matrix(transformation_matrix)
-        transform.rotation = Quaternion(
-            x=q[0],
-            y=q[1],
-            z=q[2],
-            w=q[3]
-        )
+            q = tf_transformations.quaternion_from_matrix(transformation_matrix)
+            transform.rotation = Quaternion(
+                x=q[0],
+                y=q[1],
+                z=q[2],
+                w=q[3]
+            )
 
-        result.end_pose = transform
-        return result
+            result.end_pose = transform
+            return result
         
     def execute_pose_trajectory(self, pose_traj, dt, T, at_start=True, verbose=False):
         '''
@@ -436,7 +436,7 @@ class ManipulationActionServerNode(Node):
         if not at_start:
             self.fa.goto_pose(pose_traj[0], 
                         duration=4.0, 
-                        use_impedance=False,
+                        use_impedance=True,
                         block=False,
                         cartesian_impedances=self.pickup_place_impedances)
             self.wait_for_skill_with_collision_check()
@@ -445,7 +445,7 @@ class ManipulationActionServerNode(Node):
                     duration=T, 
                     dynamic=True, 
                     buffer_time=1, 
-                    use_impedance=False,
+                    use_impedance=True,
                     cartesian_impedances=self.pickup_place_impedances
         )
 
@@ -518,13 +518,16 @@ class ManipulationActionServerNode(Node):
         new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
         new_pose.translation = [destination_x, destination_y, self.pre_grasp_height]
         new_pose.rotation = default_rotation
-        self.fa.goto_pose(new_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
+        self.fa.goto_pose(new_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=True, block=False)
         self.get_logger().info("Moving above grasp point...")
         self.wait_for_skill_with_collision_check()
         self.get_logger().info(f"Translation: {self.fa.get_pose().translation}")
         # move down
         self.get_logger().info("Moving Down...")
         curr_z = self.fa.get_pose().translation[2]
+        
+        # TODO IMPORTANT: frankapy forgets end effector offset when executing a trajectory, will jump if this is not taken into account
+        
         pose_traj, dt, T = pickup_traj(destination_x, destination_y, curr_z, destination_z)
         self.execute_pose_trajectory(pose_traj, dt, T)
         actual_z = self.fa.get_pose().translation[2]
@@ -544,7 +547,7 @@ class ManipulationActionServerNode(Node):
         self.execute_pose_trajectory(pose_traj, dt, T)
 
         # move to pre-grasp pose
-        self.fa.goto_joints(pre_grasp_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
+        self.fa.goto_joints(pre_grasp_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=True, block=False)
         self.wait_for_skill_with_collision_check()
 
         e = desired_z - actual_z
@@ -678,7 +681,7 @@ class ManipulationActionServerNode(Node):
         new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
         new_pose.translation = [destination_x, destination_y, destination_z + 0.01]
         new_pose.rotation = default_rotation
-        self.fa.goto_pose(new_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=False, block=False) # TODO Change impedances?
+        self.fa.goto_pose(new_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=True, block=False) # TODO Change impedances?
         self.get_logger().info("Moving above release point...")
         self.wait_for_skill_with_collision_check()
         actual_z = self.fa.get_pose().translation[2]
@@ -696,7 +699,7 @@ class ManipulationActionServerNode(Node):
 
         #TODO add go to pre-place position and execute collision check
         self.get_logger().info("Moving back to check position...")
-        self.fa.goto_joints(check_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=False, block=False)
+        self.fa.goto_joints(check_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=True, block=False)
         self.wait_for_skill_with_collision_check()
         e = desired_z - actual_z
         if (e > 0):
@@ -749,7 +752,7 @@ class ManipulationActionServerNode(Node):
             # add the target xyz as pose
             target_pose = RigidTransform(rotation=default_rotation, translation=target_xyz, from_frame='franka_tool', to_frame='world')
 
-            self.fa.goto_pose(target_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=False, block=False)
+            self.fa.goto_pose(target_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=True, block=False)
             self.wait_for_skill_with_collision_check()
 
             # disable vacuum
