@@ -25,18 +25,21 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "action/Pickup.action"
   "action/ReturnHome.action"
   "action/Place.action"
+  "action/ExecutePolicy.action"
+  "action/PlaceInBin.action"
   DEPENDENCIES geometry_msgs
 )
 
 install(PROGRAMS
   scripts/snaak_manipulation_node.py
+  scripts/snaak_manipulation_utils.py
+  scripts/snaak_manipulation_constants.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
 install(DIRECTORY
   launch
   config
-  ${CMAKE_SOURCE_DIR}/share/${PROJECT_NAME}/
   DESTINATION share/${PROJECT_NAME}/
 )
 

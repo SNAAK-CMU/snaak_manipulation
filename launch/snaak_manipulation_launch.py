@@ -18,6 +18,5 @@ def generate_launch_description():
             package='snaak_manipulation',
             executable='snaak_manipulation_node.py',
             name='snaak_manipulation',
-            parameters=[config_file])
-            
+            parameters=[config_file])      
     ])

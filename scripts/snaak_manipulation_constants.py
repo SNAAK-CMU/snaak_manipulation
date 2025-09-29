@@ -1,30 +1,6 @@
 #!/usr/bin/env python3
 import numpy as np
-
-TRAJECTORY_FILE_MAP = {
-    1: 'home2bin1_verified.pkl',
-    2: 'home2bin2_verified.pkl',
-    3: 'home2bin3_verified.pkl',
-    4: 'home2assembly_verified.pkl',
-    5: 'bin12home_verified.pkl',
-    6: 'bin12assembly_verified.pkl',
-    7: 'bin22home_verified.pkl',
-    8: 'bin22assembly_verified.pkl',
-    9: 'bin32home_verified.pkl',
-    10: 'bin32assembly_verified.pkl',
-    11: 'assembly2home_verified.pkl',
-    12: 'assembly2bin1_verified.pkl',
-    13: 'assembly2bin2_verified.pkl',
-    14: 'assembly2bin3_verified.pkl'
-}
-
-TRAJECTORY_ID_MAP = {
-    'home': {'bin1': 1, 'bin2': 2, 'bin3': 3, 'assembly': 4},
-    'bin1': {'home': 5, 'assembly': 6},
-    'bin2': {'home': 7, 'assembly': 8},
-    'bin3': {'home': 9, 'assembly': 10},
-    'assembly': {'home': 11, 'bin1': 12, 'bin2': 13, 'bin3': 14}
-}
+import math
 
 KIOSK_COLLISION_BOXES = np.array([
     [0.25, 0.55, 0.5, 0, 0, 0, 1.1, 0.01, 1.1],
@@ -42,3 +18,24 @@ KIOSK_COLLISION_BOXES = np.array([
     [0.43, -0.215, 0.125, 0, 0, 0, 0.68, 0.07, 0.26],
     [0.43, -0.52, 0.125, 0, 0, 0, 0.68, 0.07, 0.26]
 ])
+
+
+BIN_OFFSETS = {1: [0.64, -0.36, 0.27], 
+               2: [0.45, -0.36, 0.27],
+               3: [0.27, -0.36, 0.27],
+               4: [0.27, 0.36, 0.27],
+               5: [0.45, 0.36, 0.27],
+               6: [0.64, 0.36, 0.27]              
+               }
+# meters
+
+JOINTS_MAP = {
+    'bin1' : [-4.07751174e-01,  2.38169606e-01,  8.45487046e-05, -1.21070938e+00,  8.66927638e-05,  1.44900171e+00,  3.77907369e-01],
+    'bin2' : [-5.73274652e-01, -3.00640313e-01,  2.80517127e-05, -1.88495941e+00, -8.93803663e-05,  1.58367049e+00,  2.12323337e-01],
+    'bin3' : [-7.53689986e-01, -6.02870223e-01,  4.33557567e-05, -2.09619852e+00, -1.65502079e-04,  1.49331611e+00,  3.18516100e-02],
+    'bin4' : [ 7.86957068e-01, -7.70687553e-01, -1.22465527e-05, -2.28110808e+00, 2.23929963e-04,  1.51060092e+00,  2.75950321e-03],
+    'bin5' : [ 4.79693374e-01, -2.77645730e-01,  1.57518644e-04, -1.89869585e+00, 7.35329151e-05,  1.62082738e+00, -3.04528432e-01],
+    'bin6' : [ 3.37462648e-01,  3.73645013e-01,  1.46903976e-04, -1.08425899e+00, -7.27107257e-06,  1.45767716e+00, -4.46783458e-01],
+    'home' : [0, -math.pi / 4, 0, -3 * math.pi / 4, 0, math.pi / 2, math.pi / 4],
+    'assembly' : [ 1.81982736e-01, -2.27151217e-01,  2.08118016e-04, -1.66291050e+00, 1.74522718e-04,  1.43587285e+00,  9.67487903e-01]
+}
