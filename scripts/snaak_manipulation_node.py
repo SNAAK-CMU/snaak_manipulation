@@ -425,7 +425,7 @@ class ManipulationActionServerNode(Node):
         if not self.arm_enabled:
             goal_handle.abort()
             self.get_logger().error("Arm Disabled")
-            return ExecutePolicy.Result()
+            return ExecuteGranularGrasp.Result()
 
         # TODO: set tool offset for the soft-gripper. Note that offset is relative to hand frame
         self.fa.set_tool_delta_pose(
@@ -478,7 +478,7 @@ class ManipulationActionServerNode(Node):
                     ):
                         self.get_logger().error("Collision in Trajectory")
                         goal_handle.abort()
-                        return ExecutePolicy.Result()
+                        return ExecuteGranularGrasp.Result()
 
                 self.get_logger().info("Executing Trajectory...")
                 self.execute_joint_trajectory(joints_traj, dt, T)
@@ -547,7 +547,7 @@ class ManipulationActionServerNode(Node):
                 ):
                     self.get_logger().error("Collision in Trajectory")
                     goal_handle.abort()
-                    return ExecutePolicy.Result()
+                    return ExecuteGranularGrasp.Result()
 
             self.execute_joint_trajectory(joints_traj, dt, T)
             time.sleep(0.1)
@@ -567,7 +567,7 @@ class ManipulationActionServerNode(Node):
         finally:
             if success:
                 goal_handle.succeed()
-        return ExecutePolicy.Result()
+        return ExecuteGranularGrasp.Result()
 
     def execute_joint_trajectory(self, joints_traj, dt, T):
         # change this to use min jerk planner in utils
