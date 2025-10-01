@@ -217,6 +217,7 @@ class ManipulationActionServerNode(Node):
         actions = goal_handle.request.actions
         a1 = np.array(actions[:3])
         a2 = np.array(actions[3:])
+        self.get_logger().info(f"A1: {a1}, A2: {a2}")
         bin_id = goal_handle.request.bin_id
         bin_location = f"bin{bin_id}"
 
