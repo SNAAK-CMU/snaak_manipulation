@@ -267,19 +267,13 @@ class ManipulationActionServerNode(Node):
             return ExecutePolicy.Result()
 
         # TODO: set tool offset for the soft-gripper. Note that offset is relative to hand frame
-        self.fa.set_tool_delta_pose(
-            RigidTransform(
-                rotation=np.eye(3),
-                translation=np.array([0.075, 0, 0.06]),
-                from_frame="franka_tool",
-                to_frame="franka_tool_base",
-            )
-        )  # 5 cm down on Z axis of base frame
+        self.fa.set_tool_delta_pose(RigidTransform(rotation=np.eye(3), translation=np.array([0.085, 0, 0.06]), from_frame='franka_tool', to_frame='franka_tool_base')) # 5 cm down on Z axis of base frame
 
         # get things from request
         actions = goal_handle.request.actions
         a1 = np.array(actions[:3])
         a2 = np.array(actions[3:])
+        self.get_logger().info(f"A1: {a1}, A2: {a2}")
         bin_id = goal_handle.request.bin_id
         bin_location = f"bin{bin_id}"
 
@@ -1008,15 +1002,9 @@ class ManipulationActionServerNode(Node):
             goal_handle.abort()
             self.get_logger().error("Arm Disabled")
             return result
-
-        self.fa.set_tool_delta_pose(
-            RigidTransform(
-                rotation=np.eye(3),
-                translation=np.array([0.075, 0, 0.06]),
-                from_frame="franka_tool",
-                to_frame="franka_tool_base",
-            )
-        )  # 5 cm down on Z axis of base frame
+  
+        
+        self.fa.set_tool_delta_pose(RigidTransform(rotation=np.eye(3), translation=np.array([0.085, 0, 0.06]), from_frame='franka_tool', to_frame='franka_tool_base')) # 5 cm down on Z axis of base frame
 
         try:
             self.fa.wait_for_skill()
