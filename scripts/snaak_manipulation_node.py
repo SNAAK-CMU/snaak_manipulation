@@ -21,7 +21,7 @@ import sys
 from tf2_msgs.msg import TFMessage
 import copy
 from std_msgs.msg import String
-from snaak_manipulation_constants import JOINTS_MAP
+from snaak_manipulation_constants import CLAW_OFFSET, JOINTS_MAP
 
 
 from snaak_manipulation_constants import KIOSK_COLLISION_BOXES
@@ -122,6 +122,8 @@ class ManipulationActionServerNode(Node):
             'bin6': self.get_parameter('bin_end_effector_offsets.bin6').value
         }
         self.assembly_end_effector_offset = self.get_parameter('assembly_end_effector_offset').value
+        self.sliced_place_offset = 0.02 # drop from some height (configrue)
+
         self.gamma = 0.2
         
         self.right_bins_default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]]) # gripper facing down and camera to its right
@@ -205,6 +207,9 @@ class ManipulationActionServerNode(Node):
         return response
 
     def execute_policy_callback(self, goal_handle):
+        '''
+        Execute model outup (for data collection)
+        '''
         if not self.arm_enabled:
             goal_handle.abort()
             self.get_logger().error("Arm Disabled")
@@ -416,7 +421,7 @@ class ManipulationActionServerNode(Node):
             result.end_pose = transform
             return result
         
-    def execute_pose_trajectory(self, pose_traj, dt, T, at_start=True, verbose=False):
+    def execute_pose_trajectory(self, pose_traj, dt, T, at_start=True, verbose=False, use_frankapy_ik=False):
         '''
         Follow a pose trajectory based on a list of rigid transforms
 
@@ -437,7 +442,7 @@ class ManipulationActionServerNode(Node):
         if not at_start:
             self.fa.goto_pose(pose_traj[0], 
                         duration=4.0, 
-                        use_impedance=True,
+                        use_impedance=use_frankapy_ik,
                         block=False,
                         cartesian_impedances=self.pickup_place_impedances)
             self.wait_for_skill_with_collision_check()
@@ -446,7 +451,7 @@ class ManipulationActionServerNode(Node):
                     duration=T, 
                     dynamic=True, 
                     buffer_time=1, 
-                    use_impedance=True,
+                    use_impedance=use_frankapy_ik,
                     cartesian_impedances=self.pickup_place_impedances
         )
 
@@ -493,7 +498,7 @@ class ManipulationActionServerNode(Node):
             self.collision_detected = False
             raise Exception("In Collision with boxes, cancelling motion")
 
-    def execute_pickup(self, pickup_point, bin_id):
+    def execute_pickup_sliced(self, pickup_point, bin_id):
         '''
         Executes pickup sequence
 
@@ -504,33 +509,41 @@ class ManipulationActionServerNode(Node):
             none
         '''
         self.fa.wait_for_skill() 
+
+        # make sure we remove this offset
+        self.fa.set_tool_delta_pose(RigidTransform(rotation=np.eye(3), translation=np.zeros(3), from_frame='franka_tool', to_frame='franka_tool_base'))
+
         pre_grasp_joints = get_joints(self.current_location)
         destination_x, destination_y, destination_z = pickup_point
         desired_z = destination_z
+
         destination_z += self.bin_end_effector_offsets[f"bin{bin_id}"]
 
-        # TODO put z offset here?
         if self.current_location != 'bin4' and self.current_location != 'bin5' and self.current_location != 'bin6':
             default_rotation = self.right_bins_default_rotation
+            use_frankapy_ik = False
         else:
-            default_rotation = self.left_bins_default_rotation       
+            default_rotation = self.left_bins_default_rotation
+            use_frankapy_ik = True
+       
              
         # move to x, y, and z directly above the bin
         new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
         new_pose.translation = [destination_x, destination_y, self.pre_grasp_height]
         new_pose.rotation = default_rotation
-        self.fa.goto_pose(new_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=True, block=False)
+        self.fa.goto_pose(new_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False)
         self.get_logger().info("Moving above grasp point...")
         self.wait_for_skill_with_collision_check()
         self.get_logger().info(f"Translation: {self.fa.get_pose().translation}")
         # move down
         self.get_logger().info("Moving Down...")
-        curr_z = self.fa.get_pose().translation[2]
+        curr_loc = self.fa.get_pose().translation
         
         # TODO IMPORTANT: frankapy forgets end effector offset when executing a trajectory, will jump if this is not taken into account
-        
-        pose_traj, dt, T = pickup_traj(destination_x, destination_y, curr_z, destination_z)
-        self.execute_pose_trajectory(pose_traj, dt, T)
+        # self.fa.goto_pose(RigidTransform(rotation=default_rotation, translation=[destination_x, destination_y, destination_z], from_frame='franka_tool', to_frame='world'), cartesian_impedances=self.pickup_place_impedances, use_impedance=use_frankapy_ik, block=False)
+        # self.wait_for_skill_with_collision_check()
+        pose_traj, dt, T = pickup_traj(curr_loc[0], curr_loc[1], curr_loc[2], destination_z, default_rotation)
+        self.execute_pose_trajectory(pose_traj, dt, T, use_frankapy_ik=use_frankapy_ik)
         actual_z = self.fa.get_pose().translation[2]
         #self.get_logger().info(f"Desired Translation: {pose_traj[-1].translation}")
 
@@ -543,12 +556,14 @@ class ManipulationActionServerNode(Node):
 
         # move up
         self.get_logger().info("Moving up...")
-        curr_z = self.fa.get_pose().translation[2]
-        pose_traj, dt, T = pickup_traj(destination_x, destination_y, curr_z, self.pre_grasp_height)
-        self.execute_pose_trajectory(pose_traj, dt, T)
+        curr_loc = self.fa.get_pose().translation
 
+        pose_traj, dt, T = pickup_traj(curr_loc[0], curr_loc[1], curr_loc[2], self.pre_grasp_height, default_rotation)
+        self.execute_pose_trajectory(pose_traj, dt, T, use_frankapy_ik=use_frankapy_ik)
+        # self.fa.goto_pose(RigidTransform(rotation=default_rotation, translation=[destination_x, destination_y, self.pre_grasp_height], from_frame='franka_tool', to_frame='world'), cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, use_impedance=use_frankapy_ik, block=False)   
+        # self.wait_for_skill_with_collision_check()
         # move to pre-grasp pose
-        self.fa.goto_joints(pre_grasp_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=True, block=False)
+        self.fa.goto_joints(pre_grasp_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False)
         self.wait_for_skill_with_collision_check()
 
         e = desired_z - actual_z
@@ -557,6 +572,50 @@ class ManipulationActionServerNode(Node):
         else:
             e = max(e, -0.02)
         self.bin_end_effector_offsets[f"bin{bin_id}"] += self.gamma * e # lower z than desired should cause negative val
+
+    def execute_pickup_shredded(self, pickup_point_normalized, bin_id):
+
+        self.fa.wait_for_skill() 
+        self.fa.set_tool_delta_pose(RigidTransform(rotation=np.eye(3), translation=CLAW_OFFSET, from_frame='franka_tool', to_frame='franka_tool_base')) # 5 cm down on Z axis of base frame
+
+        pre_grasp_joints = get_joints(self.current_location)
+        destination_x, destination_y, destination_z = pickup_point_normalized + np.array(get_bin_offset(bin_id))
+        destination_z += self.bin_end_effector_offsets[f"bin{bin_id}"]
+
+        if self.current_location != 'bin4' and self.current_location != 'bin5' and self.current_location != 'bin6':
+            default_rotation = self.right_bins_default_rotation
+            use_frankapy_ik = False
+        else:
+            default_rotation = self.left_bins_default_rotation       
+            use_frankapy_ik = True
+        
+        midway_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
+        midway_pose.translation = [destination_x, destination_y, self.pre_grasp_height]
+        midway_pose.rotation = default_rotation
+
+        self.get_logger().info(f"Moving above grasp pose")
+        self.fa.goto_pose(midway_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False)
+        self.wait_for_skill_with_collision_check()
+
+        self.get_logger().info(f"Executing Action")
+        grasp_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
+        grasp_pose.translation = [destination_x, destination_y, destination_z]
+        grasp_pose.rotation = default_rotation
+
+        self.fa.goto_pose(grasp_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=use_frankapy_ik, block=False)
+        self.wait_for_skill_with_collision_check()
+
+        # execute grasp
+        self.future = self._enable_gripper_client.call_async(Trigger.Request())
+        rclpy.spin_until_future_complete(self, self.future)
+        time.sleep(1)
+
+        self.fa.goto_pose(midway_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False)
+        self.wait_for_skill_with_collision_check()
+
+        self.get_logger().info(f"Moving back to pregrasp position")
+        self.fa.goto_joints(pre_grasp_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False)
+        self.wait_for_skill_with_collision_check()
 
     def execute_pickup_callback(self, goal_handle):
         success = False
@@ -573,7 +632,10 @@ class ManipulationActionServerNode(Node):
             destination_y = goal_handle.request.y
             destination_z = goal_handle.request.z
             bin_id = goal_handle.request.bin_id
-            self.execute_pickup((destination_x, destination_y, destination_z), bin_id)
+            if (ingredient_type == 1): # 1 is sliced ingredient type
+                self.execute_pickup_sliced((destination_x, destination_y, destination_z), bin_id)
+            elif (ingredient_type == 2): # 2 is shredded
+                self.execute_pickup_shredded((destination_x, destination_y, destination_z), bin_id)
             success=True
         except Exception as e:
             self.get_logger().error(f"Error Occured during pickup motion {e} ")
@@ -616,17 +678,8 @@ class ManipulationActionServerNode(Node):
             destination_y = goal_handle.request.y
             destination_z = goal_handle.request.z
             ingredient_type = goal_handle.request.ingredient_type
-            if ingredient_type == 1:
-                self.execute_place_sliced((destination_x, destination_y, destination_z))
-                success=True
-            elif ingredient_type == 2:
-                #TODO call function for condiment placement maneuver
-                success = False
-            elif ingredient_type == 3:
-                #TODO call function for shredded ingredient placement maneuver
-                success = False
-            else:
-                raise "Invalid Ingredient Type"
+            self.execute_place((destination_x, destination_y, destination_z), ingredient_type==2)
+            success=True
         except Exception as e:
             self.get_logger().error(f"Error Occured during place motion {e} ")
             goal_handle.abort()
@@ -655,7 +708,7 @@ class ManipulationActionServerNode(Node):
             result.end_pose = transform
             return result
         
-    def execute_place_sliced(self, place_point):
+    def execute_place(self, place_point, shredded_ingredient):
         '''
         Execute place sequence
 
@@ -665,18 +718,22 @@ class ManipulationActionServerNode(Node):
         Outputs:
             none
         '''
-
         self.fa.wait_for_skill()
+
+        if (shredded_ingredient):
+            self.fa.set_tool_delta_pose(RigidTransform(rotation=np.eye(3), translation=CLAW_OFFSET, from_frame='franka_tool', to_frame='franka_tool_base')) # 5 cm down on Z axis of base frame
+        else:
+            self.fa.set_tool_delta_pose(RigidTransform(rotation=np.eye(3), translation=np.zeros(3), from_frame='franka_tool', to_frame='franka_tool_base'))
+
         check_joints = get_joints(self.current_location)
         self.get_logger().info("Executing Sliced Ingredient Place maneuver...")
         destination_x, destination_y, destination_z = place_point
+        if (shredded_ingredient): destination_z += self.sliced_place_offset
+
         desired_z = destination_z
         destination_z += self.assembly_end_effector_offset
-        
-        if self.current_location != 'bin4' and self.current_location != 'bin5' and self.current_location != 'bin6':
-            default_rotation = self.right_bins_default_rotation
-        else:
-            default_rotation = self.left_bins_default_rotation
+
+        default_rotation = self.right_bins_default_rotation # use this as our default
 
         # move to x, y, (z + 0.02)
         new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
@@ -687,16 +744,21 @@ class ManipulationActionServerNode(Node):
         self.wait_for_skill_with_collision_check()
         actual_z = self.fa.get_pose().translation[2]
 
-        # disable vacuum
-        disable_req = Trigger.Request()
-        self.future = self._disable_vacuum_client.call_async(disable_req)
-        rclpy.spin_until_future_complete(self, self.future)
+        if shredded_ingredient:
+            future = self._disable_vacuum_client.call_async(Trigger.Request())
+            rclpy.spin_until_future_complete(self, future)
+            time.sleep(1)
+        else:
+            # disable vacuum
+            disable_req = Trigger.Request()
+            self.future = self._disable_vacuum_client.call_async(disable_req)
+            rclpy.spin_until_future_complete(self, self.future)
 
-        # release ingredient
-        eject_req = SetBool.Request()
-        eject_req.data = True
-        self.future = self._eject_vacuum_client.call_async(eject_req)
-        rclpy.spin_until_future_complete(self, self.future)
+            # release ingredient
+            eject_req = SetBool.Request()
+            eject_req.data = True
+            self.future = self._eject_vacuum_client.call_async(eject_req)
+            rclpy.spin_until_future_complete(self, self.future)
 
         #TODO add go to pre-place position and execute collision check
         self.get_logger().info("Moving back to check position...")
@@ -709,9 +771,10 @@ class ManipulationActionServerNode(Node):
             e = max(e, -0.02)   
         self.assembly_end_effector_offset += self.gamma * e 
     
+
     def execute_place_in_bin_callback(self, goal_handle):
         '''
-        Place currently grasped ingredient in target bin and return to current position
+        Place currently grasped ingredient in target bin and return to current position (for data collection)
 
         '''
         success = False

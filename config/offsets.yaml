@@ -1,10 +1,10 @@
 snaak_manipulation:
   ros__parameters:
-    assembly_end_effector_offset: -0.019035184925314964
+    assembly_end_effector_offset: -0.01839239505348288
     bin_end_effector_offsets:
       bin1: -0.005560772352240685
       bin2: -0.011480963946408258
-      bin3: -0.015821156788738463
+      bin3: -0.01535314896438402
       bin4: -0.01341954609924618
       bin5: -0.006592842752051236
       bin6: -0.003121445890281472
