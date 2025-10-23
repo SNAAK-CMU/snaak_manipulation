@@ -113,15 +113,38 @@ class ManipulationActionServerNode(Node):
         self.prev_tf = None
         self.transformations = {}
 
-        self.bin_end_effector_offsets = {
-            'bin1': self.get_parameter('bin_end_effector_offsets.bin1').value,
-            'bin2': self.get_parameter('bin_end_effector_offsets.bin2').value,
-            'bin3': self.get_parameter('bin_end_effector_offsets.bin3').value,
-            'bin4': self.get_parameter('bin_end_effector_offsets.bin4').value,
-            'bin5': self.get_parameter('bin_end_effector_offsets.bin5').value,
-            'bin6': self.get_parameter('bin_end_effector_offsets.bin6').value
-        }
-        self.assembly_end_effector_offset = self.get_parameter('assembly_end_effector_offset').value
+        # Declare and read offsets from parameters and convert to numpy arrays
+        self.bin_end_effector_offsets = {}
+        for bin_id in ['bin1', 'bin2', 'bin3', 'bin4', 'bin5', 'bin6']:
+            # Declare individual x, y, z parameters for each bin
+            x_param = f'bin_end_effector_offsets.{bin_id}.x'
+            y_param = f'bin_end_effector_offsets.{bin_id}.y'
+            z_param = f'bin_end_effector_offsets.{bin_id}.z'
+            
+            if not self.has_parameter(x_param):
+                self.declare_parameter(x_param, 0.0)
+            if not self.has_parameter(y_param):
+                self.declare_parameter(y_param, 0.0)
+            if not self.has_parameter(z_param):
+                self.declare_parameter(z_param, 0.0)
+            
+            x_val = self.get_parameter(x_param).value
+            y_val = self.get_parameter(y_param).value
+            z_val = self.get_parameter(z_param).value
+            self.bin_end_effector_offsets[bin_id] = np.array([x_val, y_val, z_val])
+        
+        # Declare and convert assembly offset to numpy array
+        if not self.has_parameter('assembly_end_effector_offset.x'):
+            self.declare_parameter('assembly_end_effector_offset.x', 0.0)
+        if not self.has_parameter('assembly_end_effector_offset.y'):
+            self.declare_parameter('assembly_end_effector_offset.y', 0.0)
+        if not self.has_parameter('assembly_end_effector_offset.z'):
+            self.declare_parameter('assembly_end_effector_offset.z', 0.0)
+            
+        assembly_x = self.get_parameter('assembly_end_effector_offset.x').value
+        assembly_y = self.get_parameter('assembly_end_effector_offset.y').value
+        assembly_z = self.get_parameter('assembly_end_effector_offset.z').value
+        self.assembly_end_effector_offset = np.array([assembly_x, assembly_y, assembly_z])
         self.sliced_place_offset = 0.02 # drop from some height (configrue)
 
         self.gamma = 0.2
@@ -161,6 +184,7 @@ class ManipulationActionServerNode(Node):
     def wait_for_skill_with_collision_check(self):
         while(not self.fa.is_skill_done()):
             if (self.fa.is_joints_in_collision_with_boxes(boxes=KIOSK_COLLISION_BOXES)):
+                self.get_logger().error("In collision with boxes, stopping...")
                 self.fa.stop_skill()
                 self.fa.wait_for_skill()
                 raise Exception("In Collision with boxes, cancelling motion...")
@@ -237,8 +261,8 @@ class ManipulationActionServerNode(Node):
         a1 += bin_offset
         a2 += bin_offset 
 
-        a1[2] += self.bin_end_effector_offsets[f"bin{bin_id}"]
-        a2[2] += self.bin_end_effector_offsets[f"bin{bin_id}"]
+        a1 += self.bin_end_effector_offsets[f"bin{bin_id}"]
+        a2 += self.bin_end_effector_offsets[f"bin{bin_id}"]
         # setup result
         success = False
         
@@ -515,11 +539,16 @@ class ManipulationActionServerNode(Node):
 
         pre_grasp_joints = get_joints(self.current_location)
         destination_x, destination_y, destination_z = pickup_point
+        
+        desired_x = destination_x
+        desired_y = destination_y
         desired_z = destination_z
 
-        destination_z += self.bin_end_effector_offsets[f"bin{bin_id}"]
+        destination_x += self.bin_end_effector_offsets[f"bin{bin_id}"][0]
+        destination_y += self.bin_end_effector_offsets[f"bin{bin_id}"][1]
+        destination_z += self.bin_end_effector_offsets[f"bin{bin_id}"][2]
 
-        if self.current_location != 'bin4' and self.current_location != 'bin5' and self.current_location != 'bin6':
+        if self.current_location != 'bin4' and self.current_location != 'bin5' and self.current_location != 'bin6': # make bin 6 have the same orientation as right bins
             default_rotation = self.right_bins_default_rotation
             use_frankapy_ik = False
         else:
@@ -544,7 +573,10 @@ class ManipulationActionServerNode(Node):
         # self.wait_for_skill_with_collision_check()
         pose_traj, dt, T = pickup_traj(curr_loc[0], curr_loc[1], curr_loc[2], destination_z, default_rotation)
         self.execute_pose_trajectory(pose_traj, dt, T, use_frankapy_ik=use_frankapy_ik)
-        actual_z = self.fa.get_pose().translation[2]
+        actual_pose = self.fa.get_pose()
+        actual_x = actual_pose.translation[0]
+        actual_y = actual_pose.translation[1]
+        actual_z = actual_pose.translation[2]
         #self.get_logger().info(f"Desired Translation: {pose_traj[-1].translation}")
 
         enable_req = Trigger.Request()
@@ -566,12 +598,19 @@ class ManipulationActionServerNode(Node):
         self.fa.goto_joints(pre_grasp_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False)
         self.wait_for_skill_with_collision_check()
 
-        e = desired_z - actual_z
-        if (e > 0):
-            e = min(e, 0.02)
-        else:
-            e = max(e, -0.02)
-        self.bin_end_effector_offsets[f"bin{bin_id}"] += self.gamma * e # lower z than desired should cause negative val
+        # Update all 3 error parameters
+        e_x = desired_x - actual_x
+        e_y = desired_y - actual_y
+        e_z = desired_z - actual_z
+        
+        # Clamp errors
+        e_x = np.clip(e_x, -0.02, 0.02)
+        e_y = np.clip(e_y, -0.02, 0.02)
+        e_z = np.clip(e_z, -0.02, 0.02)
+        
+        self.bin_end_effector_offsets[f"bin{bin_id}"][0] += self.gamma * e_x
+        self.bin_end_effector_offsets[f"bin{bin_id}"][1] += self.gamma * e_y
+        self.bin_end_effector_offsets[f"bin{bin_id}"][2] += self.gamma * e_z
 
     def execute_pickup_shredded(self, pickup_point_normalized, bin_id):
 
@@ -580,7 +619,9 @@ class ManipulationActionServerNode(Node):
 
         pre_grasp_joints = get_joints(self.current_location)
         destination_x, destination_y, destination_z = pickup_point_normalized + np.array(get_bin_offset(bin_id))
-        destination_z += self.bin_end_effector_offsets[f"bin{bin_id}"]
+        destination_x += self.bin_end_effector_offsets[f"bin{bin_id}"][0]
+        destination_y += self.bin_end_effector_offsets[f"bin{bin_id}"][1]
+        destination_z += self.bin_end_effector_offsets[f"bin{bin_id}"][2]
 
         if self.current_location != 'bin4' and self.current_location != 'bin5' and self.current_location != 'bin6':
             default_rotation = self.right_bins_default_rotation
@@ -730,8 +771,13 @@ class ManipulationActionServerNode(Node):
         destination_x, destination_y, destination_z = place_point
         if (shredded_ingredient): destination_z += self.sliced_place_offset
 
+        desired_x = destination_x
+        desired_y = destination_y
         desired_z = destination_z
-        destination_z += self.assembly_end_effector_offset
+        
+        destination_x += self.assembly_end_effector_offset[0]
+        destination_y += self.assembly_end_effector_offset[1]
+        destination_z += self.assembly_end_effector_offset[2]
 
         default_rotation = self.right_bins_default_rotation # use this as our default
 
@@ -742,7 +788,10 @@ class ManipulationActionServerNode(Node):
         self.fa.goto_pose(new_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=True, block=False) # TODO Change impedances?
         self.get_logger().info("Moving above release point...")
         self.wait_for_skill_with_collision_check()
-        actual_z = self.fa.get_pose().translation[2]
+        actual_pose = self.fa.get_pose()
+        actual_x = actual_pose.translation[0]
+        actual_y = actual_pose.translation[1]
+        actual_z = actual_pose.translation[2]
 
         if shredded_ingredient:
             future = self._disable_vacuum_client.call_async(Trigger.Request())
@@ -764,12 +813,20 @@ class ManipulationActionServerNode(Node):
         self.get_logger().info("Moving back to check position...")
         self.fa.goto_joints(check_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=True, block=False)
         self.wait_for_skill_with_collision_check()
-        e = desired_z - actual_z
-        if (e > 0):
-            e = min(e, 0.02)
-        else:
-            e = max(e, -0.02)   
-        self.assembly_end_effector_offset += self.gamma * e 
+        
+        # Update all 3 error parameters
+        e_x = desired_x - actual_x
+        e_y = desired_y - actual_y
+        e_z = desired_z - actual_z
+        
+        # Clamp errors
+        e_x = np.clip(e_x, -0.02, 0.02)
+        e_y = np.clip(e_y, -0.02, 0.02)
+        e_z = np.clip(e_z, -0.02, 0.02)
+        
+        self.assembly_end_effector_offset[0] += self.gamma * e_x
+        self.assembly_end_effector_offset[1] += self.gamma * e_y
+        self.assembly_end_effector_offset[2] += self.gamma * e_z 
     
 
     def execute_place_in_bin_callback(self, goal_handle):

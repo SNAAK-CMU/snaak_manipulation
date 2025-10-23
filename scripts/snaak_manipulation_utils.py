@@ -110,16 +110,28 @@ def save_offsets_to_yaml(bin_offsets, assembly_offset):
         '~/Documents/manipulation_ws/src/snaak_manipulation/config/offsets.yaml'
     )
     
-
-# Convert the dictionaries to ensure float values
-    bin_offset_float = convert_to_float(bin_offsets)
+    # Convert numpy arrays to dictionaries with x, y, z keys
+    bin_offset_dict = {}
+    for bin_id, offset_array in bin_offsets.items():
+        bin_offset_dict[bin_id] = {
+            'x': float(offset_array[0]),
+            'y': float(offset_array[1]),
+            'z': float(offset_array[2])
+        }
+    
+    # Convert assembly offset numpy array to dictionary
+    assembly_offset_dict = {
+        'x': float(assembly_offset[0]),
+        'y': float(assembly_offset[1]),
+        'z': float(assembly_offset[2])
+    }
 
     # Updated config dictionary with float values
     updated_config = {
         'snaak_manipulation': {
             'ros__parameters': {
-                'bin_end_effector_offsets': bin_offset_float,  # converted to float
-                'assembly_end_effector_offset': float(assembly_offset)  # converted to float
+                'bin_end_effector_offsets': bin_offset_dict,
+                'assembly_end_effector_offset': assembly_offset_dict
             }
         }
     }
