@@ -1,14 +1,32 @@
 import numpy as np
 from scipy.integrate import cumtrapz
 from autolab_core import RigidTransform
-from scripts.snaak_manipulation_constants import TRAJECTORY_FILE_MAP, TRAJECTORY_ID_MAP
+from snaak_manipulation_constants import JOINTS_MAP, BIN_OFFSETS
 import os
-import pickle
 import yaml
 from ament_index_python.packages import get_package_share_directory
+from frankapy import utils
+
+def get_traj(q1, q2, dt=0.01, T=5.0):
+    '''
+    Generates a joint trajectory from q1 to q2 using a minimum jerk profile.
+    '''
+    ts = np.arange(0, T, dt)
+    q1 = np.array(q1)
+    q2 = np.array(q2)
+    joints_traj = [utils.min_jerk(q1, q2, t, T) for t in ts]
+    return joints_traj, T, dt
+        
+        
+
+def get_bin_offset(bin_id):
+    '''
+    Return XYZ offset from arm origin to center of bin
+    '''
+    return BIN_OFFSETS[bin_id]
 
 
-def pickup_traj(x, y, start_z, end_z, step_size=0.001, acceleration = 0.1):
+def pickup_traj(x, y, start_z, end_z, default_rotation, step_size=0.001, acceleration = 0.1):
     '''
     Generates a trajectory from the current x, y, start_z, to x, y, end_z 
     using a trapazoidal velocity profile.
@@ -29,8 +47,6 @@ def pickup_traj(x, y, start_z, end_z, step_size=0.001, acceleration = 0.1):
     if abs(start_z - end_z) < step_size:
         return
     
-    default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]])
-
     total_distance = abs(end_z - start_z)
     direction = 1 if end_z > start_z else -1
 
@@ -76,45 +92,15 @@ def pickup_traj(x, y, start_z, end_z, step_size=0.001, acceleration = 0.1):
     T = len(pose_traj) * dt
     return pose_traj, dt, T
 
-def get_pre_place_pickup_joints(package_share_directory, location):
+def get_joints(location):
     """
     Function to get the joint angles that correspond to the pre-pickup or pre-place position
     """
-    traj_file_path = get_traj_file(package_share_directory, location, "home")
-    if traj_file_path is None:
+    if location not in JOINTS_MAP:
         raise Exception("Invalid location provided...")
-    with open(traj_file_path, 'rb') as pkl_f:
-        skill_data = pickle.load(pkl_f)
-
-    assert skill_data[0]['skill_description'] == 'GuideMode', \
-        "Trajectory not collected in guide mode"
-    skill_state_dict = skill_data[0]['skill_state_dict']
-
-    joints = skill_state_dict['q'][0]
-    return joints
-
-def get_traj_file(package_share_directory, curr_location, end_location):
-    '''
-    Returns the trajectory pkl file based on the current and desired end location
-
-    Inputs:
-        package_share_directory: location of share directory
-        curr_location: current arm location
-        end_location: desired end location
-    
-    Outputs:
-        traj_file_path: complete file path to .pkl file
-    '''
-    pkl_file_name = None
-    traj_id = TRAJECTORY_ID_MAP[curr_location][end_location]
-    if traj_id in TRAJECTORY_FILE_MAP:
-        pkl_file_name = TRAJECTORY_FILE_MAP[traj_id]
-    else:
-        return None
-    
-    traj_file_path = os.path.join(package_share_directory, pkl_file_name)
-    return traj_file_path
-
+    desired_joints = JOINTS_MAP[location]
+    desired_joints = np.array(desired_joints)
+    return desired_joints
 
 def convert_to_float(d):
     return {key: float(value) for key, value in d.items()}
@@ -123,16 +109,29 @@ def save_offsets_to_yaml(bin_offsets, assembly_offset):
     config_file = os.path.expanduser(
         '~/Documents/manipulation_ws/src/snaak_manipulation/config/offsets.yaml'
     )
-
-# Convert the dictionaries to ensure float values
-    bin_offset_float = convert_to_float(bin_offsets)
+    
+    # Convert numpy arrays to dictionaries with x, y, z keys
+    bin_offset_dict = {}
+    for bin_id, offset_array in bin_offsets.items():
+        bin_offset_dict[bin_id] = {
+            'x': float(offset_array[0]),
+            'y': float(offset_array[1]),
+            'z': float(offset_array[2])
+        }
+    
+    # Convert assembly offset numpy array to dictionary
+    assembly_offset_dict = {
+        'x': float(assembly_offset[0]),
+        'y': float(assembly_offset[1]),
+        'z': float(assembly_offset[2])
+    }
 
     # Updated config dictionary with float values
     updated_config = {
         'snaak_manipulation': {
             'ros__parameters': {
-                'bin_end_effector_offsets': bin_offset_float,  # converted to float
-                'assembly_end_effector_offset': float(assembly_offset)  # converted to float
+                'bin_end_effector_offsets': bin_offset_dict,
+                'assembly_end_effector_offset': assembly_offset_dict
             }
         }
     }

@@ -1,30 +1,6 @@
 #!/usr/bin/env python3
 import numpy as np
-
-TRAJECTORY_FILE_MAP = {
-    1: 'home2bin1_verified.pkl',
-    2: 'home2bin2_verified.pkl',
-    3: 'home2bin3_verified.pkl',
-    4: 'home2assembly_verified.pkl',
-    5: 'bin12home_verified.pkl',
-    6: 'bin12assembly_verified.pkl',
-    7: 'bin22home_verified.pkl',
-    8: 'bin22assembly_verified.pkl',
-    9: 'bin32home_verified.pkl',
-    10: 'bin32assembly_verified.pkl',
-    11: 'assembly2home_verified.pkl',
-    12: 'assembly2bin1_verified.pkl',
-    13: 'assembly2bin2_verified.pkl',
-    14: 'assembly2bin3_verified.pkl'
-}
-
-TRAJECTORY_ID_MAP = {
-    'home': {'bin1': 1, 'bin2': 2, 'bin3': 3, 'assembly': 4},
-    'bin1': {'home': 5, 'assembly': 6},
-    'bin2': {'home': 7, 'assembly': 8},
-    'bin3': {'home': 9, 'assembly': 10},
-    'assembly': {'home': 11, 'bin1': 12, 'bin2': 13, 'bin3': 14}
-}
+import math
 
 KIOSK_COLLISION_BOXES = np.array([
     [0.25, 0.55, 0.5, 0, 0, 0, 1.1, 0.01, 1.1],
@@ -42,3 +18,26 @@ KIOSK_COLLISION_BOXES = np.array([
     [0.43, -0.215, 0.125, 0, 0, 0, 0.68, 0.07, 0.26],
     [0.43, -0.52, 0.125, 0, 0, 0, 0.68, 0.07, 0.26]
 ])
+
+
+BIN_OFFSETS = {1: [0.64, -0.36, 0.27], 
+               2: [0.44, -0.36, 0.27], # change this in mind
+               3: [0.25, -0.36, 0.27],
+               4: [0.25, 0.37, 0.27],
+               5: [0.45, 0.37, 0.27],
+               6: [0.64, 0.37, 0.27]              
+               }
+# meters
+
+JOINTS_MAP = {
+    'bin1' : [-4.07751174e-01,  2.38169606e-01,  8.45487046e-05, -1.21070938e+00,  8.66927638e-05,  1.44900171e+00,  3.77907369e-01],
+    'bin2' : [-5.73274652e-01, -3.00640313e-01,  2.80517127e-05, -1.88495941e+00, -8.93803663e-05,  1.58367049e+00,  2.12323337e-01],
+    'bin3' : [-7.53689986e-01, -6.02870223e-01,  4.33557567e-05, -2.09619852e+00, -1.65502079e-04,  1.49331611e+00,  3.18516100e-02],
+    'bin4' : [ 9.46099857e-01, -8.91331679e-01,  4.13107540e-04, -2.34560184e+00,  1.04125003e-03,  1.45461385e+00,  1.61405497e-01],
+    'bin5' : [ 5.46578584e-01, -4.36193110e-01, -2.49313024e-04, -2.04521062e+00,  3.26397392e-05,  1.60758811e+00, -2.38082293e-01],
+    'bin6' : [ 3.70607511e-01,  1.38610978e-01,  3.68550826e-04, -1.41985950e+00, -1.51883008e-05,  1.55647864e+00, -4.13299508e-01],
+    'home' : [0, -math.pi / 4, 0, -3 * math.pi / 4, 0, math.pi / 2, math.pi / 4],
+    'assembly' : [ 1.81982736e-01, -2.27151217e-01,  2.08118016e-04, -1.66291050e+00, 1.74522718e-04,  1.43587285e+00,  9.67487903e-01]
+}
+
+CLAW_OFFSET = np.array([0.085, 0, 0.06])
