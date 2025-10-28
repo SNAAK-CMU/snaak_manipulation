@@ -145,7 +145,7 @@ class ManipulationActionServerNode(Node):
         assembly_y = self.get_parameter('assembly_end_effector_offset.y').value
         assembly_z = self.get_parameter('assembly_end_effector_offset.z').value
         self.assembly_end_effector_offset = np.array([assembly_x, assembly_y, assembly_z])
-        self.sliced_place_offset = 0.02 # drop from some height (configrue)
+        self.sliced_place_offset = 0.02 # drop from some height (configure)
 
         self.gamma = 0.2
         
