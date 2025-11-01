@@ -106,7 +106,7 @@ class ManipulationActionServerNode(Node):
         self.wait_for_service_clients()
 
         self.fa = FrankaArm(init_rclpy=False)
-        self.pre_grasp_height = 0.29
+        self.pre_grasp_height = 0.3 # TODO: if arm cannot reach bins 1 or 6, may need to decrease this back down to 0.29
         self.pickup_place_impedances = [2000.0, 2000.0, 600.0, 70.0, 70.0, 70.0] # TODO: tune if notice instability
 
         self.collision_detected = False
@@ -621,6 +621,7 @@ class ManipulationActionServerNode(Node):
 
         pre_grasp_joints = get_joints(self.current_location)
         destination_x, destination_y, destination_z = pickup_point_normalized + np.array(get_bin_offset(bin_id))
+        self.get_logger().info(f"Pickup Point (with bin offset): {destination_x}, {destination_y}, {destination_z}")
         destination_x += self.bin_end_effector_offsets[f"bin{bin_id}"][0]
         destination_y += self.bin_end_effector_offsets[f"bin{bin_id}"][1]
         destination_z += self.bin_end_effector_offsets[f"bin{bin_id}"][2]
@@ -641,9 +642,9 @@ class ManipulationActionServerNode(Node):
         self.wait_for_skill_with_collision_check()
 
         # open gripper just in case
-        self.future = self._disable_gripper_client.call_async(Trigger.Request())
-        rclpy.spin_until_future_complete(self, self.future)
-        time.sleep(0.2)
+        future = self._disable_vacuum_client.call_async(Trigger.Request())
+        rclpy.spin_until_future_complete(self, future)
+        time.sleep(0.5)
 
         self.get_logger().info(f"Executing Action")
         grasp_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
