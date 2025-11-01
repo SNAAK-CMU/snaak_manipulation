@@ -22,6 +22,7 @@ from tf2_msgs.msg import TFMessage
 import copy
 from std_msgs.msg import String
 from snaak_manipulation_constants import CLAW_OFFSET, JOINTS_MAP
+from dynamixel_sdk_custom_interfaces.srv import Vibrate
 
 
 from snaak_manipulation_constants import KIOSK_COLLISION_BOXES
@@ -100,11 +101,12 @@ class ManipulationActionServerNode(Node):
         self._enable_vacuum_client = self.create_client(Trigger, '/snaak_pneumatic/enable_vacuum')
         self._eject_vacuum_client = self.create_client(SetBool, '/snaak_pneumatic/eject_vacuum')
         self._enable_gripper_client = self.create_client(Trigger, '/snaak_pneumatic/enable_gripper')
+        self._vibrate_dynamixel_client = self.create_client(Vibrate, '/vibrate')
 
         self.wait_for_service_clients()
 
         self.fa = FrankaArm(init_rclpy=False)
-        self.pre_grasp_height = 0.29
+        self.pre_grasp_height = 0.3 # TODO: if arm cannot reach bins 1 or 6, may need to decrease this back down to 0.29
         self.pickup_place_impedances = [2000.0, 2000.0, 600.0, 70.0, 70.0, 70.0] # TODO: tune if notice instability
 
         self.collision_detected = False
@@ -619,6 +621,7 @@ class ManipulationActionServerNode(Node):
 
         pre_grasp_joints = get_joints(self.current_location)
         destination_x, destination_y, destination_z = pickup_point_normalized + np.array(get_bin_offset(bin_id))
+        self.get_logger().info(f"Pickup Point (with bin offset): {destination_x}, {destination_y}, {destination_z}")
         destination_x += self.bin_end_effector_offsets[f"bin{bin_id}"][0]
         destination_y += self.bin_end_effector_offsets[f"bin{bin_id}"][1]
         destination_z += self.bin_end_effector_offsets[f"bin{bin_id}"][2]
@@ -638,6 +641,11 @@ class ManipulationActionServerNode(Node):
         self.fa.goto_pose(midway_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False)
         self.wait_for_skill_with_collision_check()
 
+        # open gripper just in case
+        future = self._disable_vacuum_client.call_async(Trigger.Request())
+        rclpy.spin_until_future_complete(self, future)
+        time.sleep(0.5)
+
         self.get_logger().info(f"Executing Action")
         grasp_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
         grasp_pose.translation = [destination_x, destination_y, destination_z]
@@ -653,6 +661,16 @@ class ManipulationActionServerNode(Node):
 
         self.fa.goto_pose(midway_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False)
         self.wait_for_skill_with_collision_check()
+
+        # vibrate dynamixel
+        vibrate = Vibrate.Request()
+        vibrate.id = 1
+        vibrate.center_position = 1030
+        vibrate.range = 50
+        vibrate.speed = 200
+        vibrate.cycles = 5
+        self.future = self._vibrate_dynamixel_client.call_async(vibrate)
+        rclpy.spin_until_future_complete(self, self.future)
 
         self.get_logger().info(f"Moving back to pregrasp position")
         self.fa.goto_joints(pre_grasp_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False)
