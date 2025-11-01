@@ -22,6 +22,7 @@ from tf2_msgs.msg import TFMessage
 import copy
 from std_msgs.msg import String
 from snaak_manipulation_constants import CLAW_OFFSET, JOINTS_MAP
+from dynamixel_sdk_custom_interfaces.srv import Vibrate
 
 
 from snaak_manipulation_constants import KIOSK_COLLISION_BOXES
@@ -100,6 +101,7 @@ class ManipulationActionServerNode(Node):
         self._enable_vacuum_client = self.create_client(Trigger, '/snaak_pneumatic/enable_vacuum')
         self._eject_vacuum_client = self.create_client(SetBool, '/snaak_pneumatic/eject_vacuum')
         self._enable_gripper_client = self.create_client(Trigger, '/snaak_pneumatic/enable_gripper')
+        self._vibrate_dynamixel_client = self.create_client(Vibrate, '/vibrate')
 
         self.wait_for_service_clients()
 
@@ -638,6 +640,11 @@ class ManipulationActionServerNode(Node):
         self.fa.goto_pose(midway_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False)
         self.wait_for_skill_with_collision_check()
 
+        # open gripper just in case
+        self.future = self._disable_gripper_client.call_async(Trigger.Request())
+        rclpy.spin_until_future_complete(self, self.future)
+        time.sleep(0.2)
+
         self.get_logger().info(f"Executing Action")
         grasp_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
         grasp_pose.translation = [destination_x, destination_y, destination_z]
@@ -653,6 +660,16 @@ class ManipulationActionServerNode(Node):
 
         self.fa.goto_pose(midway_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False)
         self.wait_for_skill_with_collision_check()
+
+        # vibrate dynamixel
+        vibrate = Vibrate.Request()
+        vibrate.id = 1
+        vibrate.center_position = 1030
+        vibrate.range = 50
+        vibrate.speed = 200
+        vibrate.cycles = 5
+        self.future = self._vibrate_dynamixel_client.call_async(vibrate)
+        rclpy.spin_until_future_complete(self, self.future)
 
         self.get_logger().info(f"Moving back to pregrasp position")
         self.fa.goto_joints(pre_grasp_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False)
