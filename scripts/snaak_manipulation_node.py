@@ -663,14 +663,14 @@ class ManipulationActionServerNode(Node):
         self.wait_for_skill_with_collision_check()
 
         # vibrate dynamixel
-        vibrate = Vibrate.Request()
-        vibrate.id = 1
-        vibrate.center_position = 1030
-        vibrate.range = 50
-        vibrate.speed = 200
-        vibrate.cycles = 5
-        self.future = self._vibrate_dynamixel_client.call_async(vibrate)
-        rclpy.spin_until_future_complete(self, self.future)
+        # vibrate = Vibrate.Request()
+        # vibrate.id = 1
+        # vibrate.center_position = 1030
+        # vibrate.range = 50
+        # vibrate.speed = 200
+        # vibrate.cycles = 5
+        # self.future = self._vibrate_dynamixel_client.call_async(vibrate)
+        # rclpy.spin_until_future_complete(self, self.future)
 
         self.get_logger().info(f"Moving back to pregrasp position")
         self.fa.goto_joints(pre_grasp_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False)
