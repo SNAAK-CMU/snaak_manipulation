@@ -815,6 +815,18 @@ class ManipulationActionServerNode(Node):
             future = self._disable_vacuum_client.call_async(Trigger.Request())
             rclpy.spin_until_future_complete(self, future)
             time.sleep(1)
+
+
+            # vibrate dynamixel: TODO: this will vibrate from the drop height, if the drop height is too low, it may scatter the ingredient
+            # there may be a need to add another intermediary pose in that case
+            vibrate = Vibrate.Request()
+            vibrate.id = 1
+            vibrate.center_position = 1030
+            vibrate.range = 50
+            vibrate.speed = 200
+            vibrate.cycles = 5
+            self.future = self._vibrate_dynamixel_client.call_async(vibrate)
+            rclpy.spin_until_future_complete(self, self.future)
         else:
             # disable vacuum
             disable_req = Trigger.Request()
