@@ -149,7 +149,7 @@ class ManipulationActionServerNode(Node):
         self.assembly_end_effector_offset = np.array([assembly_x, assembly_y, assembly_z])
         self.sliced_place_offset = 0.02 # drop from some height (configure)
 
-        self.gamma = 0.2
+        self.gamma = 0.1
         
         self.right_bins_default_rotation = np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]]) # gripper facing down and camera to its right
         self.left_bins_default_rotation = np.array([[0, 1,  0], [1, 0, 0], [0, 0, -1]]) # gripper facing down and camera to the front
