@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from re import L
 import numpy as np
 import pickle, time
 from frankapy import FrankaArm, SensorDataMessageType
@@ -403,8 +404,9 @@ class ManipulationActionServerNode(Node):
             if self.current_location != desired_end_location:
                 desired_joints = get_joints(desired_end_location)
                 start_joints = self.fa.get_joints()
-                joints_traj, T, dt = get_traj(start_joints, desired_joints, dt=0.005, T=3.0)
-                for q in joints_traj:
+                joints_traj, T, dt = get_traj(start_joints, desired_joints, dt=0.003, T=2.5)
+                for i in range(0, len(joints_traj), 10):
+                    q = joints_traj[i]
                     if self.fa.is_joints_in_collision_with_boxes(q, boxes=KIOSK_COLLISION_BOXES):
                         self.get_logger().error("Collision in Trajectory")
                         goal_handle.abort()
@@ -562,7 +564,7 @@ class ManipulationActionServerNode(Node):
         new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
         new_pose.translation = [destination_x, destination_y, self.pre_grasp_height]
         new_pose.rotation = default_rotation
-        self.fa.goto_pose(new_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False)
+        self.fa.goto_pose(new_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False, duration=2)
         self.get_logger().info("Moving above grasp point...")
         self.wait_for_skill_with_collision_check()
         self.get_logger().info(f"Translation: {self.fa.get_pose().translation}")
@@ -586,7 +588,7 @@ class ManipulationActionServerNode(Node):
 
         self.future = self._enable_vacuum_client.call_async(enable_req)
         rclpy.spin_until_future_complete(self, self.future)
-        time.sleep(2)
+        time.sleep(1)
 
         # move up
         self.get_logger().info("Moving up...")
@@ -597,8 +599,10 @@ class ManipulationActionServerNode(Node):
         # self.fa.goto_pose(RigidTransform(rotation=default_rotation, translation=[destination_x, destination_y, self.pre_grasp_height], from_frame='franka_tool', to_frame='world'), cartesian_impedances=FC.DEFAULT_CARTESIAN_IMPEDANCES, use_impedance=use_frankapy_ik, block=False)   
         # self.wait_for_skill_with_collision_check()
         # move to pre-grasp pose
-        self.fa.goto_joints(pre_grasp_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False)
+        self.get_logger().info("Moving back to pre-grasp position...")
+        self.fa.goto_joints(pre_grasp_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False, duration=3)
         self.wait_for_skill_with_collision_check()
+        self.get_logger().info("At pre-grasp position")
 
         # Update all 3 error parameters
         e_x = desired_x - actual_x
@@ -638,7 +642,7 @@ class ManipulationActionServerNode(Node):
         midway_pose.rotation = default_rotation
 
         self.get_logger().info(f"Moving above grasp pose")
-        self.fa.goto_pose(midway_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False)
+        self.fa.goto_pose(midway_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False, duration=2)
         self.wait_for_skill_with_collision_check()
 
         # open gripper just in case
@@ -651,7 +655,7 @@ class ManipulationActionServerNode(Node):
         grasp_pose.translation = [destination_x, destination_y, destination_z]
         grasp_pose.rotation = default_rotation
 
-        self.fa.goto_pose(grasp_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=use_frankapy_ik, block=False)
+        self.fa.goto_pose(grasp_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=use_frankapy_ik, block=False, duration=2)
         self.wait_for_skill_with_collision_check()
 
         # execute grasp
@@ -659,7 +663,7 @@ class ManipulationActionServerNode(Node):
         rclpy.spin_until_future_complete(self, self.future)
         time.sleep(1)
 
-        self.fa.goto_pose(midway_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False)
+        self.fa.goto_pose(midway_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False, duration=2)
         self.wait_for_skill_with_collision_check()
 
         # vibrate dynamixel
@@ -673,7 +677,7 @@ class ManipulationActionServerNode(Node):
         rclpy.spin_until_future_complete(self, self.future)
 
         self.get_logger().info(f"Moving back to pregrasp position")
-        self.fa.goto_joints(pre_grasp_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False)
+        self.fa.goto_joints(pre_grasp_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False, duration=3)
         self.wait_for_skill_with_collision_check()
 
     def execute_pickup_callback(self, goal_handle):
@@ -803,7 +807,7 @@ class ManipulationActionServerNode(Node):
         new_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
         new_pose.translation = [destination_x, destination_y, destination_z + 0.01]
         new_pose.rotation = default_rotation
-        self.fa.goto_pose(new_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=True, block=False) # TODO Change impedances?
+        self.fa.goto_pose(new_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=True, block=False, duration=2) # TODO Change impedances?
         self.get_logger().info("Moving above release point...")
         self.wait_for_skill_with_collision_check()
         actual_pose = self.fa.get_pose()
@@ -841,7 +845,7 @@ class ManipulationActionServerNode(Node):
 
         #TODO add go to pre-place position and execute collision check
         self.get_logger().info("Moving back to check position...")
-        self.fa.goto_joints(check_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=True, block=False)
+        self.fa.goto_joints(check_joints, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=True, block=False, duration=2)
         self.wait_for_skill_with_collision_check()
         
         # Update all 3 error parameters
