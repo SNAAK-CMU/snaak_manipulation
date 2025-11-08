@@ -526,12 +526,14 @@ class ManipulationActionServerNode(Node):
             self.collision_detected = False
             raise Exception("In Collision with boxes, cancelling motion")
 
-    def execute_pickup_sliced(self, pickup_point, bin_id):
+    def execute_pickup_sliced(self, pickup_point, bin_id, ingredient_name):
         '''
         Executes pickup sequence
 
         Inputs:
             pickup_point: goal pickup point
+            bin_id: ID of the bin
+            ingredient_name: name of the ingredient
         
         Outpus:
             none
@@ -618,7 +620,7 @@ class ManipulationActionServerNode(Node):
         self.bin_end_effector_offsets[f"bin{bin_id}"][1] += self.gamma * e_y
         self.bin_end_effector_offsets[f"bin{bin_id}"][2] += self.gamma * e_z
 
-    def execute_pickup_shredded(self, pickup_point_normalized, bin_id):
+    def execute_pickup_shredded(self, pickup_point_normalized, bin_id, ingredient_name):
 
         self.fa.wait_for_skill() 
         self.fa.set_tool_delta_pose(RigidTransform(rotation=np.eye(3), translation=CLAW_OFFSET, from_frame='franka_tool', to_frame='franka_tool_base')) # 5 cm down on Z axis of base frame
@@ -670,9 +672,14 @@ class ManipulationActionServerNode(Node):
         vibrate = Vibrate.Request()
         vibrate.id = 1
         vibrate.center_position = 1030
-        vibrate.range = 50
-        vibrate.speed = 200
-        vibrate.cycles = 5
+        if ingredient_name == 'shredded_onions':
+            vibrate.range = 30
+            vibrate.speed = 50
+            vibrate.cycles = 3
+        elif ingredient_name == 'shredded_lettuce':
+            vibrate.range = 30
+            vibrate.speed = 200
+            vibrate.cycles = 5
         self.future = self._vibrate_dynamixel_client.call_async(vibrate)
         rclpy.spin_until_future_complete(self, self.future)
 
@@ -695,10 +702,13 @@ class ManipulationActionServerNode(Node):
             destination_y = goal_handle.request.y
             destination_z = goal_handle.request.z
             bin_id = goal_handle.request.bin_id
+            ingredient_name = goal_handle.request.ingredient_name
             if (ingredient_type == 1): # 1 is sliced ingredient type
-                self.execute_pickup_sliced((destination_x, destination_y, destination_z), bin_id)
+                self.execute_pickup_sliced((destination_x, destination_y, destination_z), bin_id, ingredient_name)
             elif (ingredient_type == 2): # 2 is shredded
-                self.execute_pickup_shredded((destination_x, destination_y, destination_z), bin_id)
+                if ingredient_name not in ['shredded_onions', 'shredded_lettuce']:
+                    raise Exception(f"Invalid ingredient name {ingredient_name} for shredded pickup")
+                self.execute_pickup_shredded((destination_x, destination_y, destination_z), bin_id, ingredient_name)
             success=True
         except Exception as e:
             self.get_logger().error(f"Error Occured during pickup motion {e} ")
@@ -820,15 +830,12 @@ class ManipulationActionServerNode(Node):
             rclpy.spin_until_future_complete(self, future)
             time.sleep(1)
 
-
-            # vibrate dynamixel: TODO: this will vibrate from the drop height, if the drop height is too low, it may scatter the ingredient
-            # there may be a need to add another intermediary pose in that case
             vibrate = Vibrate.Request()
             vibrate.id = 1
             vibrate.center_position = 1030
-            vibrate.range = 50
-            vibrate.speed = 200
-            vibrate.cycles = 5
+            vibrate.range = 30
+            vibrate.speed = 50
+            vibrate.cycles = 3
             self.future = self._vibrate_dynamixel_client.call_async(vibrate)
             rclpy.spin_until_future_complete(self, self.future)
         else:
