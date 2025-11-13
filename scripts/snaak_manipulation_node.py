@@ -665,7 +665,13 @@ class ManipulationActionServerNode(Node):
         rclpy.spin_until_future_complete(self, self.future)
         time.sleep(1)
 
-        self.fa.goto_pose(midway_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False, duration=2)
+        shake_pose = RigidTransform(from_frame='franka_tool', to_frame='world')
+        
+        shake_pose.translation = np.array(get_bin_offset(bin_id))
+        shake_pose.translation[2] = self.pre_grasp_height
+        shake_pose.rotation = default_rotation
+
+        self.fa.goto_pose(shake_pose, joint_impedances=FC.DEFAULT_JOINT_IMPEDANCES, use_impedance=use_frankapy_ik, block=False, duration=2)
         self.wait_for_skill_with_collision_check()
 
         # vibrate dynamixel
@@ -891,20 +897,20 @@ class ManipulationActionServerNode(Node):
             self.get_logger().info(f"Arm is at {self.current_location}, requested ingredients to be placed in bin{dest_bin_id}")
             
             start_location = self.current_location
-            
             # move to pre-place of target bin
-            start_joints = self.fa.get_joints()
-
             pre_grasp_joints = get_joints(f"bin{dest_bin_id}")
-            joints_traj, T, dt = get_traj(start_joints, pre_grasp_joints, dt=0.005, T=3.0)
-            for q in joints_traj:
-                if self.fa.is_joints_in_collision_with_boxes(q, boxes=KIOSK_COLLISION_BOXES):
-                    self.get_logger().error("Collision in Trajectory")
-                    goal_handle.abort()
-                    return result
-            self.execute_joint_trajectory(joints_traj, dt, T)
-            
-            self.current_location = f"bin{dest_bin_id}"
+
+            if (start_location != f"bin{dest_bin_id}"):
+                start_joints = self.fa.get_joints()
+                joints_traj, T, dt = get_traj(start_joints, pre_grasp_joints, dt=0.005, T=3.0)
+                for i in range(0, len(joints_traj), 10):
+                    q = joints_traj[i]
+                    if self.fa.is_joints_in_collision_with_boxes(q, boxes=KIOSK_COLLISION_BOXES):
+                        self.get_logger().error("Collision in Trajectory")
+                        goal_handle.abort()
+                        return result
+                self.execute_joint_trajectory(joints_traj, dt, T)
+                self.current_location = f"bin{dest_bin_id}"
 
             target_xyz = np.array(get_bin_offset(dest_bin_id)) + np.array([0, 0, 0.05]) # drop from a bit above the bin just to be safe
             if self.current_location != 'bin4' and self.current_location != 'bin5' and self.current_location != 'bin6':
@@ -914,38 +920,49 @@ class ManipulationActionServerNode(Node):
             # add the target xyz as pose
             target_pose = RigidTransform(rotation=default_rotation, translation=target_xyz, from_frame='franka_tool', to_frame='world')
 
-            self.fa.goto_pose(target_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=True, block=False)
+            self.fa.goto_pose(target_pose, cartesian_impedances=self.pickup_place_impedances, use_impedance=True, block=False, duration=2)
             self.wait_for_skill_with_collision_check()
 
             # disable vacuum
             self.future = self._disable_vacuum_client.call_async(Trigger.Request())
             rclpy.spin_until_future_complete(self, self.future)
-            time.sleep(2)
+
+            vibrate = Vibrate.Request()
+            vibrate.id = 1
+            vibrate.center_position = 1030
+            vibrate.range = 30
+            vibrate.speed = 200
+            vibrate.cycles = 5
+            self.future = self._vibrate_dynamixel_client.call_async(vibrate)
+            rclpy.spin_until_future_complete(self, self.future)
+            time.sleep(0.5)
 
             # go back to pre-place joints
             start_joints = self.fa.get_joints()
             pre_grasp_joints = get_joints(f"bin{dest_bin_id}")
             joints_traj, T, dt = get_traj(start_joints, pre_grasp_joints, dt=0.005, T=3.0)
-            for q in joints_traj:
+            for i in range(0, len(joints_traj), 10):
+                q = joints_traj[i]
                 if self.fa.is_joints_in_collision_with_boxes(q, boxes=KIOSK_COLLISION_BOXES):
                     self.get_logger().error("Collision in Trajectory")
                     goal_handle.abort()
                     return result
             self.execute_joint_trajectory(joints_traj, dt, T)
             
+            if self.current_location != start_location:
+                # go back to start location
+                start_joints = self.fa.get_joints()
+                desired_joints = get_joints(start_location)
+                joints_traj, T, dt = get_traj(start_joints, desired_joints, dt=0.005, T=3.0)
+                for i in range(0, len(joints_traj), 10):
+                    q = joints_traj[i]
+                    if self.fa.is_joints_in_collision_with_boxes(q, boxes=KIOSK_COLLISION_BOXES):
+                        self.get_logger().error("Collision in Trajectory")
+                        goal_handle.abort()
+                        return result
             
-            # go back to start location
-            start_joints = self.fa.get_joints()
-            desired_joints = get_joints(start_location)
-            joints_traj, T, dt = get_traj(start_joints, desired_joints, dt=0.005, T=3.0)
-            for q in joints_traj:
-                if self.fa.is_joints_in_collision_with_boxes(q, boxes=KIOSK_COLLISION_BOXES):
-                    self.get_logger().error("Collision in Trajectory")
-                    goal_handle.abort()
-                    return result
-        
-            self.execute_joint_trajectory(joints_traj, dt, T)
-            self.current_location = start_location
+                self.execute_joint_trajectory(joints_traj, dt, T)
+                self.current_location = start_location
             success = True
 
         except Exception as E:
