@@ -4,7 +4,6 @@ from autolab_core import RigidTransform
 from snaak_manipulation_constants import JOINTS_MAP, BIN_OFFSETS
 import os
 import yaml
-from ament_index_python.packages import get_package_share_directory
 from frankapy import utils
 
 def get_traj(q1, q2, dt=0.01, T=5.0):
@@ -53,20 +52,18 @@ def pickup_traj(x, y, start_z, end_z, default_rotation, step_size=0.001, acceler
     dt = 0.01
     max_velocity = step_size / dt
 
-    t_accel = max_velocity / acceleration # time for robot to get up to speed
+    t_accel = max_velocity / acceleration
     d_accel = 0.5 * acceleration * t_accel**2 # distance to get up to max speed or return from max speed to 0
     t_const = 0
     if 2 * d_accel < total_distance:
-        # Full trapezoidal profile
-        d_const = total_distance - 2 * d_accel # distance of constant speed
-        t_const = d_const / max_velocity # time in constant speed
+        d_const = total_distance - 2 * d_accel
+        t_const = d_const / max_velocity
         t_total = 2 * t_accel + t_const
     else:
         # Triangular profile (not enough distance for max velocity)
-        # under constanst accel: distance = 1/2*a*t^2 (each acceleration phase is 1/2 of distance)
         t_accel = np.sqrt(total_distance / acceleration) 
         t_total = 2 * t_accel
-        max_velocity = acceleration * t_accel  # Adjusted max velocity
+        max_velocity = acceleration * t_accel
 
     t = np.arange(0, t_total + dt, dt)
 
@@ -80,7 +77,6 @@ def pickup_traj(x, y, start_z, end_z, default_rotation, step_size=0.001, acceler
 
     z_values = direction * cumtrapz(v, t, initial=0) + start_z
 
-    # Ensure the last value is exactly end_z
     if z_values[-1] != end_z:
         z_values = np.append(z_values, end_z)
 
@@ -110,7 +106,6 @@ def save_offsets_to_yaml(bin_offsets, assembly_offset):
         '~/Documents/manipulation_ws/src/snaak_manipulation/config/offsets.yaml'
     )
     
-    # Convert numpy arrays to dictionaries with x, y, z keys
     bin_offset_dict = {}
     for bin_id, offset_array in bin_offsets.items():
         bin_offset_dict[bin_id] = {
@@ -119,14 +114,12 @@ def save_offsets_to_yaml(bin_offsets, assembly_offset):
             'z': float(offset_array[2])
         }
     
-    # Convert assembly offset numpy array to dictionary
     assembly_offset_dict = {
         'x': float(assembly_offset[0]),
         'y': float(assembly_offset[1]),
         'z': float(assembly_offset[2])
     }
 
-    # Updated config dictionary with float values
     updated_config = {
         'snaak_manipulation': {
             'ros__parameters': {
